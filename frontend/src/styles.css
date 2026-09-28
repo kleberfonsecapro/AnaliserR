@@ -1,0 +1,274 @@
+:root {
+  --verde: #367962;
+  --verde-escuro: #22524c;
+  --verde-claro: #51a65a;
+  --amarelo: #f5c745;
+  --tinta: #1c2b28;
+  --papel: #f4f7f5;
+  --cartao: #ffffff;
+  --linha: #d5e0db;
+  --apoio: #5c6b66;
+  color: var(--tinta);
+  background: var(--papel);
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+  line-height: 1.45;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  border-radius: 8px;
+  background: var(--verde);
+  color: #fff;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+button:hover {
+  background: var(--verde-escuro);
+}
+
+button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+button.secundario {
+  background: transparent;
+  color: var(--verde-escuro);
+  border: 1px solid var(--verde);
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+input,
+select {
+  border: 1px solid var(--linha);
+  border-radius: 8px;
+  background: #fff;
+  padding: 0.7rem 0.75rem;
+  font-weight: 500;
+}
+
+input:focus {
+  outline: 2px solid var(--amarelo);
+  border-color: var(--verde);
+}
+
+.cartao {
+  background: var(--cartao);
+  border: 1px solid #e3ebe7;
+  border-radius: 16px;
+  padding: 1.25rem;
+}
+
+.olho {
+  margin: 0;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  color: var(--verde);
+  font-weight: 700;
+}
+
+h1,
+h2 {
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+h1 {
+  margin: 0.2rem 0 0.35rem;
+  font-size: 1.8rem;
+}
+
+h2 {
+  margin: 0;
+  grid-column: 1 / -1;
+  font-size: 1.1rem;
+}
+
+.apoio {
+  margin: 0;
+  color: var(--apoio);
+  font-weight: 500;
+}
+
+.erro,
+.aviso {
+  margin: 0.25rem 0 0;
+}
+
+.erro {
+  color: #8f2d2d;
+  font-weight: 600;
+}
+
+.aviso {
+  color: var(--verde-escuro);
+}
+
+.login {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 5.5rem 1.25rem 2rem;
+  background:
+    linear-gradient(#f5c745, #f5c745) 0 0 / 100% 6px no-repeat,
+    linear-gradient(#22524c, #22524c) 0 6px / 100% 72px no-repeat,
+    var(--papel);
+}
+
+.login-cartao {
+  width: min(100%, 26rem);
+  display: grid;
+  gap: 0.85rem;
+  border-top: 4px solid var(--amarelo);
+}
+
+.logo-saeti {
+  width: min(100%, 16rem);
+  height: auto;
+  justify-self: center;
+}
+
+.orgao {
+  margin: 0;
+  text-align: center;
+  color: var(--verde-escuro);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.login h1,
+.marca,
+.funcao {
+  text-align: center;
+}
+
+.marca {
+  margin: 0;
+  color: var(--verde-escuro);
+  font-size: 1.65rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.funcao {
+  margin: -0.35rem 0 0.15rem;
+  color: var(--apoio);
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.admin {
+  width: min(100%, 52rem);
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.admin header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: end;
+}
+
+.sessao {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--apoio);
+}
+
+.grade {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.8rem;
+}
+
+.grade button,
+.check {
+  align-self: end;
+}
+
+.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.lista {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.linha {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr 0.9fr auto auto;
+  gap: 0.8rem;
+  align-items: end;
+}
+
+.dica {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--apoio);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.acoes {
+  display: flex;
+  gap: 0.5rem;
+}
+
+button.perigo {
+  background: transparent;
+  color: #8f2d2d;
+  border: 1px solid #e3b4b4;
+}
+
+.papel {
+  display: inline-block;
+  margin-left: 0.5rem;
+  color: var(--apoio);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 800px) {
+  .admin header,
+  .grade,
+  .linha {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .sessao {
+    justify-content: space-between;
+  }
+}
