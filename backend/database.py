@@ -1,12 +1,54 @@
-"""Conexão com o PostgreSQL e persistência das análises e dos usuários."""
+"""Conexão com o PostgreSQL e persistência de clientes, reuniões e usuários."""
 
 import asyncio
 import logging
 import os
+import unicodedata
 
 import asyncpg
 
+import migracoes
+
 logger = logging.getLogger("analiser.database")
+
+
+def _falha_de_conexao(erro: Exception) -> bool:
+    """Só vale a pena repetir se o problema for o banco fora do ar.
+
+    A lógica é invertida de propósito: em vez de listar o que é bug, o que se
+    pergunta é se o erro é de conexão. Qualquer outra coisa — NameError,
+    MigrationError, constraint violada — é defeito de código, e repetir dez
+    vezes só esconde a causa atrás de "banco indisponível".
+    """
+    se_conexao = (
+        asyncpg.CannotConnectNowError,
+        asyncpg.TooManyConnectionsError,
+        ConnectionError,
+        OSError,
+        asyncio.TimeoutError,
+    )
+    if isinstance(erro, se_conexao):
+        return True
+    # Driver de conexão: falha de socket/DNS é transitória, mas erro de protocolo
+    # ou credencial não é.
+    return isinstance(erro, asyncpg.PostgresError) and not isinstance(
+        erro,
+        (
+            asyncpg.UndefinedTableError,
+            asyncpg.UndefinedColumnError,
+            asyncpg.UndefinedFunctionError,
+            asyncpg.SyntaxOrAccessError,
+            asyncpg.DuplicateTableError,
+            asyncpg.InvalidCatalogNameError,
+        ),
+    )
+
+
+def normalizar_pesquisa(texto: str) -> str:
+    """Minúsculas e sem acentos, para comparar nomes digitados no Telegram."""
+    decomposto = unicodedata.normalize("NFKD", texto.lower())
+    sem_acento = "".join(c for c in decomposto if not unicodedata.combining(c))
+    return " ".join("".join(c if c.isalnum() or c.isspace() else " " for c in sem_acento).split())
 
 
 class Database:
@@ -20,6 +62,7 @@ class Database:
             try:
                 self.pool = await asyncpg.create_pool(dsn)
                 try:
+                    await migracoes.aplicar(self.pool)
                     await self._garantir_niveis()
                 except Exception:
                     await self.pool.close()
@@ -29,7 +72,15 @@ class Database:
                 return
             except Exception as exc:
                 last_error = exc
-                logger.warning("banco indisponível, tentativa %s/10", attempt)
+                # A causa real importa: uma migração com bug de sintaxe é
+                # indistinguível de banco fora do ar se o log só diz
+                # "indisponível". Logar a exceção, mas não repetir 10x um erro
+                # que não vai se resolver com espera.
+                logger.warning("falha ao conectar (tentativa %s/10): %s: %s",
+                               attempt, type(exc).__name__, exc, exc_info=True)
+                if not _falha_de_conexao(exc):
+                    logger.error("erro que não se resolve com espera; abortando")
+                    raise
                 await asyncio.sleep(2)
         assert last_error is not None
         raise last_error
@@ -62,33 +113,223 @@ class Database:
                 """
             )
 
-    async def inserir_analise(self, telegram_user_id: int, relatorio_gerado: str) -> int:
+    # ---------------------------------------------------------------- clientes
+
+    async def criar_cliente(
+        self,
+        nome: str,
+        nome_normalizado: str,
+        criado_por: int | None,
+    ) -> asyncpg.Record:
+        """Devolve o cliente já cadastrado com esse nome, ou cria um novo.
+
+        A base é compartilhada na agência, então dois devs digitando "Clínica
+        São João" precisam cair no mesmo cliente. Sem esta guarda, as reuniões
+        ficariam partedas entre homônimos.
+        """
         assert self.pool is not None
         async with self.pool.acquire() as conn:
-            analise_id = await conn.fetchval(
+            existente = await conn.fetchrow(
                 """
-                INSERT INTO analises_mvp (telegram_user_id, relatorio_gerado)
-                VALUES ($1, $2)
-                RETURNING id
+                SELECT id, codigo, nome, nome_normalizado, data_criacao
+                FROM clientes
+                WHERE nome_normalizado = $1
                 """,
-                telegram_user_id,
-                relatorio_gerado,
+                nome_normalizado,
             )
-        logger.info("análise %s gravada para o usuário %s", analise_id, telegram_user_id)
-        return analise_id
+            if existente is not None:
+                logger.info(
+                    "cliente %s reaproveitado para %r (já existia como %r)",
+                    existente["codigo"],
+                    nome,
+                    existente["nome"],
+                )
+                return existente
+            return await conn.fetchrow(
+                """
+                INSERT INTO clientes (codigo, nome, nome_normalizado, criado_por)
+                VALUES (
+                    'CLI-' || LPAD(
+                        (
+                            SELECT COALESCE(MAX(SUBSTRING(c.codigo FROM 5)::int), 0) + 1
+                            FROM clientes c
+                            WHERE c.codigo ~ '^CLI-[0-9]+$'
+                        )::text, 4, '0'
+                    ),
+                    $1, $2, $3
+                )
+                RETURNING id, codigo, nome, nome_normalizado, data_criacao
+                """,
+                nome,
+                nome_normalizado,
+                criado_por,
+            )
 
-    async def listar_analises(self, telegram_user_id: int) -> list[asyncpg.Record]:
+    async def buscar_cliente_por_codigo(self, codigo: str) -> asyncpg.Record | None:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                """
+                SELECT c.id, c.codigo, c.nome, c.nome_normalizado,
+                       COUNT(r.id)::int AS total_reunioes,
+                       COALESCE(MAX(r.numero), 0) AS ultima_reuniao
+                FROM clientes c
+                LEFT JOIN reunioes r ON r.cliente_id = c.id
+                WHERE UPPER(c.codigo) = UPPER($1)
+                GROUP BY c.id
+                """,
+                codigo.strip(),
+            )
+
+    async def buscar_cliente_por_nome(self, termo: str) -> list[asyncpg.Record]:
+        """Busca por nome, ignorando acentos e caixa. Prefere quem começa com o termo."""
+        assert self.pool is not None
+        alvo = normalizar_pesquisa(termo)
+        if not alvo:
+            return []
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(
+                """
+                SELECT c.id, c.codigo, c.nome,
+                       COUNT(r.id)::int AS total_reunioes,
+                       COALESCE(MAX(r.numero), 0) AS ultima_reuniao
+                FROM clientes c
+                LEFT JOIN reunioes r ON r.cliente_id = c.id
+                WHERE c.nome_normalizado LIKE $1 || '%'
+                   OR c.nome_normalizado LIKE '% ' || $1 || '%'
+                GROUP BY c.id
+                ORDER BY
+                    (c.nome_normalizado LIKE $1 || '%') DESC,
+                    c.nome_normalizado ASC
+                LIMIT 10
+                """,
+                alvo,
+            )
+
+    async def listar_clientes(self) -> list[asyncpg.Record]:
         assert self.pool is not None
         async with self.pool.acquire() as conn:
             return await conn.fetch(
                 """
-                SELECT id, relatorio_gerado, data_criacao
-                FROM analises_mvp
-                WHERE telegram_user_id = $1
-                ORDER BY data_criacao ASC, id ASC
+                SELECT c.id, c.codigo, c.nome,
+                       COUNT(r.id)::int AS total_reunioes,
+                       COALESCE(MAX(r.numero), 0) AS ultima_reuniao,
+                       c.data_criacao
+                FROM clientes c
+                LEFT JOIN reunioes r ON r.cliente_id = c.id
+                GROUP BY c.id
+                ORDER BY c.nome_normalizado ASC
+                """
+            )
+
+    # --------------------------------------------------------------- reuniões
+
+    async def inserir_reuniao(
+        self,
+        cliente_id: int,
+        telegram_user_id: int,
+        numero: int,
+        relatorio_gerado: str,
+        transcricao: str | None = None,
+    ) -> int:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            reuniao_id = await conn.fetchval(
+                """
+                INSERT INTO reunioes
+                    (cliente_id, telegram_user_id, numero, transcricao, relatorio_gerado)
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING id
+                """,
+                cliente_id,
+                telegram_user_id,
+                numero,
+                transcricao,
+                relatorio_gerado,
+            )
+        logger.info(
+            "reunião %s do cliente %s gravada para o usuário %s",
+            numero,
+            cliente_id,
+            telegram_user_id,
+        )
+        return reuniao_id
+
+    async def listar_reunioes_do_cliente(self, cliente_id: int) -> list[asyncpg.Record]:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(
+                """
+                SELECT id, numero, relatorio_gerado, transcricao, data_criacao
+                FROM reunioes
+                WHERE cliente_id = $1
+                ORDER BY numero ASC
+                """,
+                cliente_id,
+            )
+
+    async def buscar_reuniao(self, cliente_id: int, numero: int) -> asyncpg.Record | None:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                """
+                SELECT id, numero, relatorio_gerado, transcricao, data_criacao
+                FROM reunioes
+                WHERE cliente_id = $1 AND numero = $2
+                """,
+                cliente_id,
+                numero,
+            )
+
+    async def proximo_numero_reuniao(self, cliente_id: int) -> int:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            ultimo = await conn.fetchval(
+                "SELECT COALESCE(MAX(numero), 0) FROM reunioes WHERE cliente_id = $1",
+                cliente_id,
+            )
+        return int(ultimo) + 1
+
+    async def listar_reunioes_do_usuario(self, telegram_user_id: int) -> list[asyncpg.Record]:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(
+                """
+                SELECT r.id, r.numero, r.data_criacao, r.relatorio_gerado,
+                       c.id AS cliente_id, c.codigo AS cliente_codigo, c.nome AS cliente_nome
+                FROM reunioes r
+                JOIN clientes c ON c.id = r.cliente_id
+                WHERE r.telegram_user_id = $1
+                ORDER BY r.data_criacao DESC, r.id DESC
                 """,
                 telegram_user_id,
             )
+
+    async def ultima_reuniao(self) -> asyncpg.Record | None:
+        """A reunião mais recente de todos, com o cliente dela."""
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                """
+                SELECT r.numero, r.data_criacao, r.relatorio_gerado,
+                       r.total_reunioes, r.ultima_reuniao,
+                       c.id AS cliente_id, c.id, c.codigo, c.nome
+                FROM (
+                    SELECT cliente_id, numero, data_criacao, relatorio_gerado,
+                           COUNT(*) OVER (PARTITION BY cliente_id)::int AS total_reunioes,
+                           MAX(numero) OVER (PARTITION BY cliente_id) AS ultima_reuniao
+                    FROM reunioes
+                ) r
+                JOIN clientes c ON c.id = r.cliente_id
+                ORDER BY r.data_criacao DESC, r.numero DESC
+                LIMIT 1
+                """
+            )
+
+    async def total_reunioes(self) -> int:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            return int(await conn.fetchval("SELECT COUNT(*) FROM reunioes"))
 
     async def buscar_usuario_por_telegram_id(self, telegram_user_id: int) -> asyncpg.Record | None:
         """Procura pelo ID do Telegram. None = ainda não cadastrado."""

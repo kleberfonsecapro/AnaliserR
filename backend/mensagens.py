@@ -91,7 +91,84 @@ SEM_REUNIAO = """{saudacao}
 
 Ainda não tenho uma reunião sua salva, então não consigo responder nem gerar o PDF.
 
-Envie o áudio da conversa com o cliente. Quando o relatório estiver pronto, peça o PDF ou pergunte sobre o roadmap aqui no chat."""
+Envie o áudio da conversa com o cliente. Quando o relatório estiver pronto, peça o PDF ou pergunte sobre o roadmap aqui no chat.
+
+*Mudando de assunto:* agora eu separo as reuniões por cliente. Use /menu para escolher um cliente, ou /nova_reuniao para acrescentar uma reunião a um cliente que já existe."""
+
+MENU_CLIENTES = """{saudacao}
+
+*Escolha um cliente*
+{clientes}
+
+Você também pode escrever direto, sem usar o menu:
+"cliente nome" / "cliente CLI-0007" / "reuniao 2 da CLI-0007"."""
+
+MENU_CLIENTE_ENTRADA = """Qual cliente?
+
+*Opções*
+- Escreva o nome, mesmo parcial: "clínica São"
+- Escreva o código: "CLI-0007"
+- /cancelar para desistir"""
+
+MENU_CLIENTE_NAO_ENCONTRADO = """Nenhum cliente com "{termo}".
+
+{disponiveis}
+
+/menu para ver todos, ou mande o áudio de uma conversa nova."""
+
+MENU_CLIENTE_VARIOS = """Achei {total} clientes com "{termo}":
+
+{lista}
+
+Refine com mais letras ou escreva o código exato."""
+
+MENU_CLIENTE_DETALHE = """*{nome}* ({codigo})
+{quantidade} reunião(ões) salva(s).
+
+{lista}"""
+
+MENU_CLIENTE_SEM_REUNIAO = """*{nome}* ({codigo}) ainda não tem nenhuma reunião.
+
+Use /nova_reuniao para acrescentar a primeira, ou mande o áudio da conversa."""
+
+CONFIRMAR_CLIENTE = """Confirma o cliente?
+
+*{nome}*
+{trecho}
+{ja_existe}
+
+O relatório já está pronto. Escolha:
+{opcoes}"""
+
+CONFIRMAR_CLIENTE_DESCONHECIDO = """Não consegui identificar o cliente na conversa.
+
+O relatório está pronto. Em qual cliente salvo?
+
+{opcoes}
+
+/menu para ver todos, ou mande o áudio de novo se o cliente for outro."""
+
+CLIENTE_SALVO = """*{nome}* ({codigo}) — reunião {numero} salva{fonte}
+
+O relatório abaixo é desta reunião."""
+
+CANCELADO = """Cancelado. Nada foi salvo.
+
+Pode mandar o áudio de novo quando quiser."""
+
+NOVA_REUNIAO_CLIENTE = """*Nova reunião*
+
+Para quem é a reunião?
+
+*Opções*
+- nome do cliente, mesmo parcial: "clínica São"
+- código: "CLI-0007"
+- /cancelar para desistir"""
+
+NOVA_REUNIAO_NUMERO = """Cliente: *{nome}* ({codigo})
+{quantidade} reunião(ões) salva(s){ultimo}.
+
+A próxima é a reunião *{proximo}*? Responda *sim* para gravar, ou mande o áudio da conversa agora."""
 
 SEM_AUTORIZACAO = """O uso do bot ainda não está liberado para você.
 
@@ -121,6 +198,8 @@ _ORDINAIS = (
     ("quart", 4),
     ("quint", 5),
 )
+_TERMOS_NUMERO = ("dez", "onze", "doze", "treze", "catorze", "quinze", "dezesseis",
+                  "dezessete", "dezoito", "dezenove", "vinte")
 
 
 def normalizar(texto: str) -> list[str]:
@@ -130,6 +209,69 @@ def normalizar(texto: str) -> list[str]:
 
 
 MAX_PALAVRAS_SAUDACAO = 5
+MAX_CLIENTES_MENU = 25
+MAX_CLIENTES_ENCONTRADOS = 8
+
+_CODIGO_CLIENTE = re.compile(r"\bcli[-\s]?(\d{1,8})\b", re.IGNORECASE)
+
+
+def parece_codigo_cliente(texto: str) -> str | None:
+    """Extrai 'CLI-0007' de um texto livre. None se não parece código."""
+    achado = _CODIGO_CLIENTE.search(texto)
+    if achado:
+        return f"CLI-{int(achado.group(1)):04d}"
+    limpa = texto.strip().upper()
+    if limpa.isdigit() and 1 <= int(limpa) <= 99999999:
+        return f"CLI-{int(limpa):04d}"
+    return None
+
+
+def termo_de_busca(texto: str) -> str:
+    """Tira o rótulo e a pontuação, sobrando só o nome digitado."""
+    limpo = re.sub(r"^\s*(qual\s+cliente|cliente|para\s+o\s+cliente)\b", " ", texto, flags=re.IGNORECASE)
+    return re.sub(r"[\"'`*_?]+", " ", limpo).strip()
+
+
+def listar_clientes_menu(clientes: list) -> str:
+    if not clientes:
+        return "Nenhum cliente cadastrado ainda."
+    linhas = [
+        f"- *{c['codigo']}* — {c['nome']} ({c['total_reunioes']} reunião(ões))"
+        for c in clientes[:MAX_CLIENTES_MENU]
+    ]
+    if len(clientes) > MAX_CLIENTES_MENU:
+        linhas.append(f"- … e mais {len(clientes) - MAX_CLIENTES_MENU}")
+    return "\n".join(linhas)
+
+
+def resumir_clientes(clientes: list) -> str:
+    if not clientes:
+        return "Nenhum cliente cadastrado ainda."
+    return ", ".join(f"{c['codigo']} ({c['nome']})" for c in clientes[:MAX_CLIENTES_MENU])
+
+
+def listar_reunioes_menu(reunioes: list) -> str:
+    return "\n".join(
+        f"- Reunião {r['numero']} — {r['data_criacao'].strftime('%d/%m/%Y')}"
+        for r in reunioes
+    ) or "- Nenhuma reunião ainda."
+
+
+def listar_encontrados(clientes: list) -> str:
+    linhas = [
+        f"- *{c['codigo']}* — {c['nome']} ({c['total_reunioes']} reunião(ões))"
+        for c in clientes[:MAX_CLIENTES_ENCONTRADOS]
+    ]
+    if len(clientes) > MAX_CLIENTES_ENCONTRADOS:
+        linhas.append(f"- … e mais {len(clientes) - MAX_CLIENTES_ENCONTRADOS}")
+    return "\n".join(linhas)
+
+
+OPCOES_CLIENTE = (
+    "1 — é esse cliente, salvar a reunião aqui\n"
+    "2 — salvar em outro cliente já cadastrado (envie o nome ou o código)\n"
+    "3 — criar um cliente novo com esse nome"
+)
 
 
 def quer_documento(texto: str) -> bool:
@@ -146,7 +288,11 @@ def quer_documento(texto: str) -> bool:
 
 
 def indice_reuniao(texto: str, total: int) -> int:
-    """Índice 0-based da reunião citada. Sem número, fica a mais recente."""
+    """Índice 0-based da reunião citada. Sem número, fica a mais recente.
+
+    `total` é a quantidade de reuniões do cliente, e o resultado é o número da
+    reunião menos um: reunião 2 de um cliente com 3 reuniões devolve 1.
+    """
     if total <= 0:
         raise ValueError("não há reunião salva")
     frase = " ".join(normalizar(texto))
@@ -154,9 +300,12 @@ def indice_reuniao(texto: str, total: int) -> int:
     for raiz, numero in _ORDINAIS:
         if any(token.startswith(raiz) for token in tokens) and numero <= total:
             return numero - 1
-    encontrado = re.search(r"reuniao\s+(\d+)", frase)
-    if encontrado:
-        numero = int(encontrado.group(1))
+    for posicao, raiz in enumerate(_TERMOS_NUMERO, start=10):
+        if any(token.startswith(raiz) for token in tokens) and posicao <= total:
+            return posicao - 1
+    # O número da reunião, não a posição: "reuniao 2" é a segunda.
+    for achado in re.finditer(r"(?:reuniao|numero)\s*(?:n[o°]?\s*)?(\d{1,3})", frase):
+        numero = int(achado.group(1))
         if 1 <= numero <= total:
             return numero - 1
     return total - 1
