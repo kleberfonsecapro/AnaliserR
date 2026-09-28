@@ -375,13 +375,24 @@ class Database:
             )
 
     async def garantir_admin(self, email: str, senha_hash: str) -> None:
+        """Cria o admin na primeira vez; garante papel e acesso.
+
+        Não atualiza a senha a cada boot (bcrypt usa salt diferente). Se o admin
+        quiser trocar a senha, deve usar o painel ou um script dedicado.
+        """
         assert self.pool is not None
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO usuarios (email, senha_hash, papel, pode_usar_bot)
-                VALUES ($1, $2, 'admin', FALSE)
-                ON CONFLICT (email) DO UPDATE SET senha_hash = EXCLUDED.senha_hash
+                VALUES ($1, $2, 'admin', TRUE)
+                ON CONFLICT (email) DO UPDATE SET
+                    papel         = CASE WHEN usuarios.papel <> 'admin'
+                                         THEN 'admin'
+                                         ELSE usuarios.papel END,
+                    pode_usar_bot = CASE WHEN usuarios.pode_usar_bot <> TRUE
+                                         THEN TRUE
+                                         ELSE usuarios.pode_usar_bot END
                 """,
                 email,
                 senha_hash,
