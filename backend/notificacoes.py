@@ -1,8 +1,13 @@
-"""Mensagens que o bot envia ao usuário sem esperar um áudio — por exemplo, quando o admin libera o acesso dele."""
+"""Configuração e mensagens que o bot envia sem esperar um áudio.
+
+Duas coisas acontecem aqui no boot, sem depender de o usuário mandar comando:
+a descrição do bot no perfil e os comandos que aparecem no botão de menu, ao
+lado do campo de texto, no chat do Telegram.
+"""
 
 import logging
 
-from telegram import Bot
+from telegram import Bot, BotCommand, MenuButtonCommands
 from telegram.error import Forbidden, TelegramError
 
 from mensagens import DESCRICAO_BOT, Acesso, mensagem_de_boas_vindas
@@ -10,6 +15,14 @@ from mensagens import DESCRICAO_BOT, Acesso, mensagem_de_boas_vindas
 logger = logging.getLogger("analiser.notificacoes")
 
 _bot: Bot | None = None
+
+# Os comandos que o dev precisa sem decorar. A ordem é a que o Telegram
+# mostra: os dois primeiros são o caminho normal, o último é a saída.
+COMANDOS = (
+    BotCommand("menu", "listar e buscar clientes"),
+    BotCommand("nova_reuniao", "acrescentar reunião a um cliente"),
+    BotCommand("cancelar", "desistir do que está em andamento"),
+)
 
 
 def registrar_bot(bot: Bot) -> None:
@@ -24,6 +37,32 @@ async def descrever_bot() -> None:
         await _bot.set_my_description(description=DESCRICAO_BOT)
     except TelegramError:
         logger.warning("não foi possível atualizar a descrição do bot no Telegram")
+    await _publicar_comandos()
+
+
+async def _publicar_comandos() -> None:
+    """Publica os comandos e liga o botão de menu ao lado do campo de texto.
+
+    Sem `set_chat_menu_button`, o usuário precisa decorar "/menu"; sem
+    `set_my_commands`, o botão abre uma lista vazia. As duas chamadas juntas
+    são o que faz o menu aparecer.
+    """
+    if _bot is None:
+        return
+    try:
+        await _bot.set_my_commands(COMANDOS)
+    except TelegramError:
+        logger.warning("não foi possível publicar os comandos no Telegram", exc_info=True)
+        return
+    try:
+        await _bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+    except TelegramError:
+        logger.warning("não foi possível ligar o botão de menu no Telegram", exc_info=True)
+        return
+    logger.info(
+        "comandos publicados (%s) e botão de menu ligado",
+        ", ".join(f"/{c.command}" for c in COMANDOS),
+    )
 
 
 async def _primeiro_nome(telegram_user_id: int) -> str | None:
