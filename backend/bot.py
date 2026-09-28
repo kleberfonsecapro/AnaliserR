@@ -28,6 +28,7 @@ from mensagens import (
 )
 from pdf_relatorio import formatar_data, gerar_pdf
 from notificacoes import descrever_bot, registrar_bot
+import referencia as referencia_mod
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -44,7 +45,9 @@ Regras:
 - Extraia só o necessário para um produto mínimo viável.
 - Corte funcionalidades que não são essenciais para a primeira versão e liste-as em "Fora da versão 1".
 - Não invente requisitos que não estejam na transcrição. O que faltar fica em "Pontos em aberto".
-- Sugira uma stack enxuta, adequada ao que foi dito, sem listar dezenas de alternativas.
+- A stack padrão da organização é a primeira opção. Use-a sempre que servir ao pedido, sem listar dezenas de alternativas.
+- Se alguma tecnologia da stack padrão não servir ao pedido do cliente (aplicativo mobile nativo, IoT, machine learning, jogo, sistema embarcado), use o que servir e diga no topo da seção "Stack sugerida" qual tecnologia foi descartada e por quê, em uma ou duas frases. Sem justificativa, use a stack padrão.
+- O contrato de engenharia recebido é condição de entrega, não preferência. Converta cada uma das suas práticas em uma etapa concreta do "Roadmap passo a passo" e em um item verificável de "Critérios de aceite".
 - O relatório deve servir como guia para começar a desenvolver.
 
 Use exatamente estas seções:
@@ -96,13 +99,17 @@ async def transcrever(caminho: Path) -> str:
 
 async def analisar(transcricao: str) -> str:
     assert _groq is not None
+    referencia = referencia_mod.hash_referencia()
+    logger.info("analisando com a referência %s", referencia)
+    mensagens = [
+        *referencia_mod.mensagens_de_referencia(),
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": f"Transcrição do áudio do cliente:\n\n{transcricao}"},
+    ]
     resposta = await _groq.chat.completions.create(
         model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
         temperature=0.2,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Transcrição do áudio do cliente:\n\n{transcricao}"},
-        ],
+        messages=mensagens,
     )
     conteudo = resposta.choices[0].message.content
     if not conteudo:
@@ -292,6 +299,11 @@ def criar_telegram() -> Application:
 @asynccontextmanager
 async def ciclo_de_vida(_app: FastAPI):
     global _groq, _telegram
+    try:
+        referencia_mod.carregar()
+    except referencia_mod.ReferenciaIndisponivel as erro:
+        logger.error("subindo sem a referência da organização: %s", erro)
+        raise
     await db.connect()
     await db.garantir_admin(
         os.environ["ADMIN_EMAIL"].strip().lower(),
