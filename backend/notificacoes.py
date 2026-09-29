@@ -16,11 +16,12 @@ logger = logging.getLogger("analiser.notificacoes")
 
 _bot: Bot | None = None
 
-# Os comandos que o dev precisa sem decorar. A ordem é a que o Telegram
-# mostra: os dois primeiros são o caminho normal, o último é a saída.
+# Os comandos que o dev precisa sem decorar. A ordem é a do botão de menu:
+# escolher o cliente, acrescentar reunião, cadastrar um nome novo, desistir.
 COMANDOS = (
-    BotCommand("menu", "listar e buscar clientes"),
+    BotCommand("menu", "escolher cliente pelo nome ou código"),
     BotCommand("nova_reuniao", "acrescentar reunião a um cliente"),
+    BotCommand("novo_cliente", "cadastrar um cliente novo"),
     BotCommand("cancelar", "desistir do que está em andamento"),
 )
 

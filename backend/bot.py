@@ -1,8 +1,10 @@
 """Bot do Telegram e processo que também sobe a API do admin."""
 
+import asyncio
 import logging
 import os
 import re
+import time
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
@@ -11,10 +13,11 @@ import asyncpg
 
 from fastapi import FastAPI
 from groq import AsyncGroq
-from telegram import InputFile, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.error import TelegramError
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ConversationHandler,
     ContextTypes,
@@ -27,6 +30,8 @@ from auth import hash_senha
 from database import db
 from database import normalizar_pesquisa
 from mensagens import (
+    AUDIO_SEM_CLIENTE,
+    CLIENTE_PRONTO_AUDIO,
     CLIENTE_SALVO,
     CONFIRMAR_CLIENTE,
     CONFIRMAR_CLIENTE_DESCONHECIDO,
@@ -37,7 +42,7 @@ from mensagens import (
     MENU_CLIENTE_VARIOS,
     MENU_CLIENTES,
     NOVA_REUNIAO_CLIENTE,
-    NOVA_REUNIAO_NUMERO,
+    NOVO_CLIENTE_NOME,
     OPCOES_CLIENTE,
     SEM_REUNIAO,
     CANCELADO,
@@ -71,7 +76,7 @@ LIMITE_TELEGRAM = 4096
 
 # Estados da conversa: menu de clientes e gravação de nova reunião.
 ESCOLHER_CLIENTE, CLIENTE_NOVA_REUNIAO, CONFIRMAR_NUMERO = 0, 1, 2
-AGUARDAR_AUDIO, ESCOLHER_CLIENTE_DO_AUDIO = 3, 4
+AGUARDAR_AUDIO, ESCOLHER_CLIENTE_DO_AUDIO, PEDIR_NOME = 3, 4, 5
 
 SYSTEM_PROMPT = """Você é o tech lead de IA e analista de requisitos do AnaliseR.
 Recebe a transcrição de uma conversa com o cliente e devolve um relatório em Markdown.
@@ -98,6 +103,46 @@ Use exatamente estas seções:
 """
 
 _groq: AsyncGroq | None = None
+
+# Limites de áudio (SEC-003) — valores conservadores, ajustáveis via .env depois.
+MAX_AUDIO_FILE_SIZE = 20 * 1024 * 1024      # 20 MB (Telegram aceita até 50 MB)
+MAX_AUDIO_DURATION = 30 * 60                # 30 minutos
+AUDIO_COOLDOWN_SEGUNDOS = 60                # 1 minuto entre áudios do mesmo usuário
+MAX_AUDIO_CONCORRENTES = 2                  # semáforo para não saturar a Groq
+_semaforo_audio: asyncio.Semaphore | None = None
+_ultimo_audio_por_usuario: dict[int, float] = {}
+
+
+async def _inicializar_limites() -> None:
+    """Cria o semáforo no loop de eventos certo."""
+    global _semaforo_audio
+    if _semaforo_audio is None:
+        _semaforo_audio = asyncio.Semaphore(MAX_AUDIO_CONCORRENTES)
+
+
+def _verificar_limites_audio(update: Update) -> str | None:
+    """Valida tamanho, duração e cooldown. Devolve mensagem de erro ou None se OK."""
+    if update.message is None:
+        return "Mensagem inválida."
+    audio = update.message.voice or update.message.audio
+    if audio is None:
+        return "Não é áudio."
+    if audio.file_size is not None and audio.file_size > MAX_AUDIO_FILE_SIZE:
+        return f"Áudio muito grande ({audio.file_size // 1024 // 1024} MB). Limite: {MAX_AUDIO_FILE_SIZE // 1024 // 1024} MB."
+    if audio.duration is not None and audio.duration > MAX_AUDIO_DURATION:
+        return f"Áudio muito longo ({audio.duration // 60} min). Limite: {MAX_AUDIO_DURATION // 60} min."
+    user_id = update.effective_user.id if update.effective_user else 0
+    agora = time.time()
+    ultimo = _ultimo_audio_por_usuario.get(user_id, 0)
+    if agora - ultimo < AUDIO_COOLDOWN_SEGUNDOS:
+        espera = int(AUDIO_COOLDOWN_SEGUNDOS - (agora - ultimo))
+        return f"Espere {espera}s antes de enviar outro áudio."
+    return None
+
+
+def _registrar_audio_processado(update: Update) -> None:
+    if update.effective_user:
+        _ultimo_audio_por_usuario[update.effective_user.id] = time.time()
 _telegram: Application | None = None
 
 
@@ -232,13 +277,54 @@ async def conversar(pergunta: str, relatorio: str, rotulo: str) -> str:
     return sem_marca.replace("`", "").strip()
 
 
-async def responder(update: Update, texto: str) -> None:
-    assert update.message is not None
+def _alvo(update: Update):
+    """Mensagem em que a resposta pode ser pendurada, inclusive num toque de botão."""
+    if update.message is not None:
+        return update.message
+    if update.callback_query is not None:
+        return update.callback_query.message
+    return None
+
+
+def _md(texto: str) -> str:
+    return re.sub(r"([_*`\[])", r"\\\1", str(texto))
+
+
+def _teclado_clientes(clientes: list, incluir_novo: bool = True) -> InlineKeyboardMarkup:
+    linhas = []
+    for cliente in clientes[:25]:
+        rotulo = f"{cliente['nome']} · {cliente['codigo']} · {cliente['total_reunioes']}"
+        if len(rotulo) > 60:
+            rotulo = f"{str(cliente['nome'])[:28]} · {cliente['codigo']}"
+        linhas.append([InlineKeyboardButton(rotulo, callback_data=f"c:{cliente['codigo']}")])
+    if incluir_novo:
+        linhas.append([InlineKeyboardButton("Novo cliente", callback_data="novo")])
+    return InlineKeyboardMarkup(linhas)
+
+
+def _teclado_ficha(cliente: asyncpg.Record, reunioes: list) -> InlineKeyboardMarkup:
+    codigo = cliente["codigo"]
+    linhas = [[InlineKeyboardButton("Nova reunião", callback_data=f"n:{codigo}")]]
+    for reuniao in reunioes:
+        numero = reuniao["numero"]
+        linhas.append([
+            InlineKeyboardButton(f"Reunião {numero}", callback_data=f"a:{codigo}:{numero}"),
+            InlineKeyboardButton("PDF", callback_data=f"p:{codigo}:{numero}"),
+        ])
+    linhas.append([InlineKeyboardButton("Voltar aos clientes", callback_data="menu")])
+    return InlineKeyboardMarkup(linhas)
+
+
+async def responder(update: Update, texto: str, teclado: InlineKeyboardMarkup | None = None) -> None:
+    alvo = _alvo(update)
+    if alvo is None:
+        return
+    extras = {"reply_markup": teclado} if teclado is not None else {}
     try:
-        await update.message.reply_text(texto, parse_mode="Markdown")
+        await alvo.reply_text(texto, parse_mode="Markdown", **extras)
     except TelegramError:
         logger.warning("Telegram recusou o Markdown; enviando texto puro")
-        await update.message.reply_text(texto)
+        await alvo.reply_text(texto, **extras)
 
 
 async def enviar_relatorio(update: Update, relatorio: str) -> None:
@@ -346,41 +432,43 @@ async def _resolver_cliente(_update: Update, texto: str) -> tuple[list[asyncpg.R
 
 async def _mostrar_cliente(update: Update, cliente: asyncpg.Record) -> None:
     reunioes = await db.listar_reunioes_do_cliente(cliente["id"])
+    teclado = _teclado_ficha(cliente, reunioes)
+    nome = _md(cliente["nome"])
+    codigo = _md(cliente["codigo"])
     if not reunioes:
-        await responder(update, MENU_CLIENTE_SEM_REUNIAO.format(
-            nome=cliente["nome"], codigo=cliente["codigo"]
-        ))
+        await responder(update, MENU_CLIENTE_SEM_REUNIAO.format(nome=nome, codigo=codigo), teclado)
         return
     await responder(update, MENU_CLIENTE_DETALHE.format(
-        nome=cliente["nome"],
-        codigo=cliente["codigo"],
+        nome=nome,
+        codigo=codigo,
         quantidade=len(reunioes),
         lista=listar_reunioes_menu(reunioes),
-    ))
+    ), teclado)
 
 
-async def comando_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    del context
-    if update.message is None or update.effective_user is None:
+async def _enviar_menu(update: Update) -> int:
+    if update.effective_user is None:
         return ESCOLHER_CLIENTE
-    acesso = await classificar(update.effective_user.id)
-    if acesso is not Acesso.LIBERADO:
-        await responder(update, mensagem_de_recusa(acesso, update.effective_user.id,
-                                                    update.effective_user.first_name))
-        return ESCOLHER_CLIENTE
-
     try:
         clientes = await db.listar_clientes()
     except Exception:
         logger.exception("falha ao listar clientes do menu")
-        await update.message.reply_text("Não consegui listar os clientes. Tente de novo.")
+        await responder(update, "Não consegui listar os clientes. Tente de novo.")
         return ESCOLHER_CLIENTE
-
     await responder(update, MENU_CLIENTES.format(
         saudacao=linha_saudacao(update.effective_user.first_name),
         clientes=listar_clientes_menu(clientes),
-    ))
+    ), _teclado_clientes(clientes))
     return ESCOLHER_CLIENTE
+
+
+async def comando_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    del context
+    if update.effective_user is None:
+        return ESCOLHER_CLIENTE
+    if not await _liberado(update, update.effective_user.id):
+        return ConversationHandler.END
+    return await _enviar_menu(update)
 
 
 async def escolher_cliente(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -403,7 +491,7 @@ async def escolher_cliente(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await responder(update, MENU_CLIENTE_NAO_ENCONTRADO.format(
             termo=termo_de_busca(texto) or texto,
             disponiveis=resumir_clientes(todos) or "Nenhum cliente cadastrado ainda.",
-        ))
+        ), _teclado_clientes(todos))
         return ESCOLHER_CLIENTE
 
     if len(encontrados) > 1 and not exato:
@@ -411,7 +499,7 @@ async def escolher_cliente(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             total=len(encontrados),
             termo=termo_de_busca(texto) or texto,
             lista=listar_encontrados(encontrados),
-        ))
+        ), _teclado_clientes(encontrados, incluir_novo=False))
         return ESCOLHER_CLIENTE
 
     await _mostrar_cliente(update, encontrados[0])
@@ -451,7 +539,7 @@ async def escolher_cliente_nova_reuniao(update: Update, context: ContextTypes.DE
         await responder(update, MENU_CLIENTE_NAO_ENCONTRADO.format(
             termo=termo_de_busca(texto) or texto,
             disponiveis=resumir_clientes(todos) or "Nenhum cliente cadastrado ainda.",
-        ))
+        ), _teclado_clientes(todos))
         return CLIENTE_NOVA_REUNIAO
 
     if len(encontrados) > 1 and not exato:
@@ -459,23 +547,11 @@ async def escolher_cliente_nova_reuniao(update: Update, context: ContextTypes.DE
             total=len(encontrados),
             termo=termo_de_busca(texto) or texto,
             lista=listar_encontrados(encontrados),
-        ))
+        ), _teclado_clientes(encontrados, incluir_novo=False))
         return CLIENTE_NOVA_REUNIAO
 
-    cliente = encontrados[0]
-    reunioes = await db.listar_reunioes_do_cliente(cliente["id"])
-    contexto = {
-        "nome": cliente["nome"],
-        "codigo": cliente["codigo"],
-        "quantidade": len(reunioes),
-        "ultimo": (
-            f", última em {reunioes[-1]['data_criacao'].strftime('%d/%m/%Y')}" if reunioes else ""
-        ),
-        "proximo": await db.proximo_numero_reuniao(cliente["id"]),
-    }
-    context.user_data["cliente_nova_reuniao"] = dict(cliente)
-    await responder(update, NOVA_REUNIAO_NUMERO.format(**contexto))
-    return CONFIRMAR_NUMERO
+    await _mostrar_cliente(update, encontrados[0])
+    return ESCOLHER_CLIENTE
 
 
 async def confirmar_numero(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -500,6 +576,134 @@ async def confirmar_numero(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return ConversationHandler.END
     await responder(update, 'Responda "sim" para gravar, ou "não" para cancelar.')
     return CONFIRMAR_NUMERO
+
+
+async def _preparar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                          cliente: asyncpg.Record) -> int:
+    """Reserva o próximo número e espera o áudio já com o cliente definido."""
+    if update.effective_user is not None:
+        context.user_data["telegram_user_id"] = update.effective_user.id
+    proximo = await db.proximo_numero_reuniao(cliente["id"])
+    context.user_data["cliente_nova_reuniao"] = dict(cliente)
+    context.user_data["numero_reservado"] = proximo
+    await responder(update, CLIENTE_PRONTO_AUDIO.format(
+        nome=_md(cliente["nome"]),
+        codigo=_md(cliente["codigo"]),
+        numero=proximo,
+    ))
+    return AGUARDAR_AUDIO
+
+
+async def comando_novo_cliente(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    del context
+    if update.effective_user is None:
+        return PEDIR_NOME
+    if not await _liberado(update, update.effective_user.id):
+        return ConversationHandler.END
+    await responder(update, NOVO_CLIENTE_NOME)
+    return PEDIR_NOME
+
+
+async def receber_nome_novo_cliente(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.message is None or update.effective_user is None:
+        return PEDIR_NOME
+    nome = (update.message.text or "").strip()
+    if len(nome) < 2:
+        await responder(update, NOVO_CLIENTE_NOME)
+        return PEDIR_NOME
+    codigo = parece_codigo_cliente(nome)
+    if codigo:
+        achado = await db.buscar_cliente_por_codigo(codigo)
+        if achado is None:
+            await responder(update, f"Não achei {codigo}. Escreva o nome do cliente novo.")
+            return PEDIR_NOME
+        await _mostrar_cliente(update, achado)
+        return ESCOLHER_CLIENTE
+    try:
+        cliente = await db.criar_cliente(
+            nome, normalizar_pesquisa(nome), update.effective_user.id
+        )
+    except Exception:
+        logger.exception("falha ao cadastrar cliente")
+        await responder(update, "Não consegui cadastrar esse cliente. Tente de novo.")
+        return PEDIR_NOME
+    return await _preparar_audio(update, context, cliente)
+
+
+async def audio_sem_cliente(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Áudio chega sem cliente escolhido: não transcreve."""
+    del context
+    if update.effective_user is not None and not await _liberado(update, update.effective_user.id):
+        return ConversationHandler.END
+    await responder(update, AUDIO_SEM_CLIENTE)
+    return ESCOLHER_CLIENTE
+
+
+async def ao_toque(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    consulta = update.callback_query
+    if consulta is None:
+        return ESCOLHER_CLIENTE
+    if consulta.message is None:
+        await consulta.answer("Abra /menu de novo.", show_alert=True)
+        return ConversationHandler.END
+    await consulta.answer()
+    if update.effective_user is None:
+        return ESCOLHER_CLIENTE
+    if not await _liberado(update, update.effective_user.id):
+        return ConversationHandler.END
+
+    dado = consulta.data or ""
+    try:
+        if dado in {"menu", "novo"} or dado.startswith(("c:", "n:")):
+            return await _toque_cliente(update, context, dado)
+        if dado.startswith(("a:", "p:")):
+            return await _toque_reuniao(update, dado)
+    except Exception:
+        logger.exception("falha ao tratar o botão %s", dado)
+        await responder(update, "Não consegui abrir isso. Tente de novo.")
+    return ESCOLHER_CLIENTE
+
+
+async def _toque_cliente(update: Update, context: ContextTypes.DEFAULT_TYPE, dado: str) -> int:
+    if dado == "menu":
+        return await _enviar_menu(update)
+    if dado == "novo":
+        await responder(update, NOVO_CLIENTE_NOME)
+        return PEDIR_NOME
+    codigo = dado.split(":", 1)[1]
+    cliente = await db.buscar_cliente_por_codigo(codigo)
+    if cliente is None:
+        await responder(update, f"Não achei {codigo}. Abra /menu de novo.")
+        return ESCOLHER_CLIENTE
+    if dado.startswith("n:"):
+        return await _preparar_audio(update, context, cliente)
+    await _mostrar_cliente(update, cliente)
+    return ESCOLHER_CLIENTE
+
+
+async def _toque_reuniao(update: Update, dado: str) -> int:
+    acao, codigo, bruto = dado.split(":", 2)
+    try:
+        numero = int(bruto)
+    except ValueError:
+        await responder(update, "Não consegui abrir essa reunião.")
+        return ESCOLHER_CLIENTE
+    cliente = await db.buscar_cliente_por_codigo(codigo)
+    if cliente is None:
+        await responder(update, f"Não achei {codigo}.")
+        return ESCOLHER_CLIENTE
+    registro = await db.buscar_reuniao(cliente["id"], numero)
+    if registro is None:
+        await responder(update, f"{cliente['nome']} ({codigo}) não tem reunião {numero}.")
+        return ESCOLHER_CLIENTE
+    contexto = f"{cliente['nome']} ({codigo}) — reunião {numero}"
+    quando = formatar_data(registro["data_criacao"])
+    if acao == "p":
+        await _enviar_pdf(update, registro, contexto, quando, codigo)
+        return ESCOLHER_CLIENTE
+    await responder(update, f"*{_md(cliente['nome'])}* ({_md(codigo)}) — reunião {numero}")
+    await enviar_relatorio(update, registro["relatorio_gerado"])
+    return ESCOLHER_CLIENTE
 
 
 async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -632,19 +836,21 @@ async def _resolver_reuniao(update: Update, texto: str) -> tuple[asyncpg.Record,
 
 async def _enviar_pdf(update: Update, registro: asyncpg.Record, contexto: str, quando: str,
                       cliente_codigo: str) -> None:
-    assert update.message is not None
+    alvo = _alvo(update)
+    if alvo is None:
+        return
     numero = registro["numero"]
-    await update.message.reply_text(f"Estou gerando o PDF: {contexto}.")
+    await alvo.reply_text(f"Estou gerando o PDF: {contexto}.")
     try:
         pdf = gerar_pdf(registro["relatorio_gerado"], numero, registro["data_criacao"])
         nome = f"AnaliseR-{cliente_codigo}-reuniao-{numero}.pdf"
-        await update.message.reply_document(
+        await alvo.reply_document(
             document=InputFile(pdf, filename=nome),
             caption=f"{contexto}, de {quando}. Relatório e roadmap.",
         )
     except Exception:
         logger.exception("falha ao gerar o PDF da reunião %s", registro["id"])
-        await update.message.reply_text("Não consegui gerar o PDF. Tente de novo.")
+        await alvo.reply_text("Não consegui gerar o PDF. Tente de novo.")
         return
     logger.info("PDF da reunião %s enviado", registro["id"])
 
@@ -652,9 +858,17 @@ async def _enviar_pdf(update: Update, registro: asyncpg.Record, contexto: str, q
 async def ao_receber_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message is None or update.effective_user is None:
         return
+    await _inicializar_limites()
+
     audio = update.message.voice or update.message.audio
     if audio is None:
         return
+
+    erro = _verificar_limites_audio(update)
+    if erro:
+        assert update.message is not None
+        await update.message.reply_text(erro)
+        return ConversationHandler.END
 
     usuario_id = update.effective_user.id
     context.user_data["telegram_user_id"] = usuario_id
@@ -679,12 +893,10 @@ async def _liberado(update: Update, usuario_id: int) -> bool:
         acesso = await classificar(usuario_id)
     except Exception:
         logger.exception("falha ao consultar permissão do usuário %s", usuario_id)
-        assert update.message is not None
-        await update.message.reply_text("Não consegui consultar a permissão. Tente de novo.")
+        await responder(update, "Não consegui consultar a permissão. Tente de novo.")
         return False
     if acesso is Acesso.LIBERADO:
         return True
-    assert update.message is not None
     await responder(update, mensagem_de_recusa(acesso, usuario_id,
                                                 update.effective_user.first_name
                                                 if update.effective_user else None))
@@ -693,27 +905,33 @@ async def _liberado(update: Update, usuario_id: int) -> bool:
 
 async def _processar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE,
                            audio) -> tuple[str, str] | None:
-    """Baixa, transcreve e gera o relatório. Devolve None se não deu para seguir."""
+    """Baixa, transcreve e gera o relatório. Devolve None se não deu para seguir.
+
+    Usa semáforo para limitar processamento concorrente (SEC-003).
+    """
     assert update.message is not None
+    await _inicializar_limites()
     caminho = Path("/tmp") / f"analiser-{audio.file_unique_id}.ogg"
     await update.message.reply_text("Recebi o áudio. Estou transcrevendo e montando o MVP.")
-    try:
-        arquivo = await context.bot.get_file(audio.file_id)
-        await arquivo.download_to_drive(custom_path=str(caminho))
-        transcricao = await transcrever(caminho)
-        if not transcricao:
-            await update.message.reply_text("Não consegui ouvir conteúdo nesse áudio.")
+    async with _semaforo_audio:
+        try:
+            arquivo = await context.bot.get_file(audio.file_id)
+            await arquivo.download_to_drive(custom_path=str(caminho))
+            transcricao = await transcrever(caminho)
+            if not transcricao:
+                await update.message.reply_text("Não consegui ouvir conteúdo nesse áudio.")
+                return None
+            relatorio = await analisar(transcricao)
+        except Exception:
+            logger.exception("falha ao processar áudio do usuário %s",
+                             update.effective_user.id if update.effective_user else "?")
+            await update.message.reply_text("Não consegui processar esse áudio. Tente de novo.")
             return None
-        relatorio = await analisar(transcricao)
-    except Exception:
-        logger.exception("falha ao processar áudio do usuário %s",
-                         update.effective_user.id if update.effective_user else "?")
-        await update.message.reply_text("Não consegui processar esse áudio. Tente de novo.")
-        return None
-    finally:
-        if caminho.exists():
-            caminho.unlink()
-            logger.info("arquivo temporário removido: %s", caminho.name)
+        finally:
+            if caminho.exists():
+                caminho.unlink()
+                logger.info("arquivo temporário removido: %s", caminho.name)
+    _registrar_audio_processado(update)
     return relatorio, transcricao
 
 
@@ -873,44 +1091,55 @@ async def _texto_inesperado_aguardando(update: Update, context: ContextTypes.DEF
     return AGUARDAR_AUDIO
 
 
-def _conversa_clientes() -> ConversationHandler:
-    """Toda interação com cliente mora num único ConversationHandler.
+def _toque() -> CallbackQueryHandler:
+    return CallbackQueryHandler(ao_toque, pattern=r"^(menu|novo|c:.+|n:.+|a:.+:\d+|p:.+:\d+)$")
 
-    Handler por fluxo não funciona aqui: o grupo de áudio do `/nova_reuniao`
-    seria interceptado pelo handler de áudio solto, que é registrado antes.
-    Um só handler deixa o estado explícito e elimina essa ambiguidade.
-    """
+
+def _conversa_clientes() -> ConversationHandler:
+    """Cliente primeiro: o áudio só entra depois que nome e código estão escolhidos."""
     return ConversationHandler(
         entry_points=[
             CommandHandler("menu", comando_menu),
             CommandHandler("nova_reuniao", comando_nova_reuniao),
-            MessageHandler(filters.VOICE | filters.AUDIO, ao_receber_audio),
+            CommandHandler("novo_cliente", comando_novo_cliente),
+            _toque(),
         ],
         states={
             ESCOLHER_CLIENTE: [
-                MessageHandler(filters.VOICE | filters.AUDIO, _audio_inesperado),
+                _toque(),
+                MessageHandler(filters.VOICE | filters.AUDIO, audio_sem_cliente),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, escolher_cliente),
             ],
             CLIENTE_NOVA_REUNIAO: [
-                MessageHandler(filters.VOICE | filters.AUDIO, _audio_inesperado),
+                _toque(),
+                MessageHandler(filters.VOICE | filters.AUDIO, audio_sem_cliente),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, escolher_cliente_nova_reuniao),
             ],
             CONFIRMAR_NUMERO: [
+                _toque(),
                 MessageHandler(filters.VOICE | filters.AUDIO, audio_da_nova_reuniao),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, confirmar_numero),
             ],
             AGUARDAR_AUDIO: [
+                _toque(),
                 MessageHandler(filters.VOICE | filters.AUDIO, audio_da_nova_reuniao),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, _texto_inesperado_aguardando),
             ],
             ESCOLHER_CLIENTE_DO_AUDIO: [
-                MessageHandler(filters.VOICE | filters.AUDIO, _audio_inesperado),
+                _toque(),
+                MessageHandler(filters.VOICE | filters.AUDIO, audio_sem_cliente),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, escolher_cliente_do_audio),
+            ],
+            PEDIR_NOME: [
+                _toque(),
+                MessageHandler(filters.VOICE | filters.AUDIO, audio_sem_cliente),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receber_nome_novo_cliente),
             ],
         },
         fallbacks=[CANCELAR],
         conversation_timeout=LIMITE_CONVERSA,
         per_message=False,
+        allow_reentry=True,
     )
 
 
@@ -918,6 +1147,7 @@ def criar_telegram() -> Application:
     aplicacao = Application.builder().token(os.environ["TELEGRAM_BOT_TOKEN"]).build()
     aplicacao.add_handler(_conversa_clientes())
     aplicacao.add_handler(CommandHandler("start", comando_start))
+    aplicacao.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, audio_sem_cliente))
     aplicacao.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ao_receber_texto))
     return aplicacao
 
@@ -943,7 +1173,10 @@ async def ciclo_de_vida(_app: FastAPI):
     await _telegram.start()
     if _telegram.updater is None:
         raise RuntimeError("o updater do Telegram não foi criado")
-    await _telegram.updater.start_polling(drop_pending_updates=True, allowed_updates=["message"])
+    await _telegram.updater.start_polling(
+        drop_pending_updates=True,
+        allowed_updates=["message", "callback_query"],
+    )
     logger.info("bot e API no ar")
     try:
         yield

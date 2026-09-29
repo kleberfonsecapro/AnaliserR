@@ -54,9 +54,11 @@ Você manda o áudio de uma conversa com o cliente e eu devolvo o escopo de um M
 5. Registro o que ficou em aberto na conversa."""
 
 _COMO_USAR = """*Como usar*
-Envie uma mensagem de voz, ou um arquivo de áudio, aqui no chat. O relatório volta aqui.
+1. Abra /menu e escolha o cliente pelo nome ou pelo código.
+2. Na ficha, toque em *Nova reunião*. Se ele ainda não existe, use /novo_cliente.
+3. Só então envie o áudio. O relatório entra nesse cliente.
 
-Depois, pode conversar sobre essa reunião ou pedir o PDF. Por exemplo: "gera o PDF da primeira reunião"."""
+Para rever uma reunião, abra a ficha e toque nela, ou peça o PDF."""
 
 PRIMEIRO_USO = """{saudacao}
 
@@ -85,23 +87,21 @@ JA_AUTORIZADO = """{saudacao}
 
 {como_usar}
 
-Você já está autorizado. Pode mandar o áudio."""
+Você já está autorizado. Escolha o cliente no /menu antes de mandar o áudio."""
 
 SEM_REUNIAO = """{saudacao}
 
 Ainda não tenho uma reunião sua salva, então não consigo responder nem gerar o PDF.
 
-Envie o áudio da conversa com o cliente. Quando o relatório estiver pronto, peça o PDF ou pergunte sobre o roadmap aqui no chat.
-
-*Mudando de assunto:* agora eu separo as reuniões por cliente. Use /menu para escolher um cliente, ou /nova_reuniao para acrescentar uma reunião a um cliente que já existe."""
+Escolha o cliente no /menu, ou cadastre um com /novo_cliente, e só então envie o áudio."""
 
 MENU_CLIENTES = """{saudacao}
 
-*Escolha um cliente*
+*Clientes*
 {clientes}
 
-Você também pode escrever direto, sem usar o menu:
-"cliente nome" / "cliente CLI-0007" / "reuniao 2 da CLI-0007"."""
+Toque em um cliente, ou escreva o nome ou o código.
+Cliente novo: /novo_cliente."""
 
 MENU_CLIENTE_ENTRADA = """Qual cliente?
 
@@ -125,11 +125,28 @@ Refine com mais letras ou escreva o código exato."""
 MENU_CLIENTE_DETALHE = """*{nome}* ({codigo})
 {quantidade} reunião(ões) salva(s).
 
-{lista}"""
+{lista}
+
+Toque em *Nova reunião* para acrescentar, ou abra uma reunião abaixo."""
 
 MENU_CLIENTE_SEM_REUNIAO = """*{nome}* ({codigo}) ainda não tem nenhuma reunião.
 
-Use /nova_reuniao para acrescentar a primeira, ou mande o áudio da conversa."""
+Toque em *Nova reunião* e envie o áudio da primeira conversa."""
+
+AUDIO_SEM_CLIENTE = """Antes do áudio, escolha o cliente.
+
+Abra /menu e toque no nome, ou escreva o nome ou o código (CLI-0007).
+Cliente novo: /novo_cliente."""
+
+NOVO_CLIENTE_NOME = """*Novo cliente*
+
+Qual é o nome? Vou gravar e devolver o código. Depois você envia o áudio da primeira reunião.
+
+/cancelar para desistir."""
+
+CLIENTE_PRONTO_AUDIO = """*{nome}* ({codigo})
+
+Reunião {numero} pronta para gravar. Envie o áudio da conversa. O relatório entra neste cliente."""
 
 CONFIRMAR_CLIENTE = """Confirma o cliente?
 
@@ -181,9 +198,9 @@ Seu cadastro já existe, mas o uso do bot ainda não está liberado.
 Peça ao administrador para ativar "Pode usar o bot" no painel."""
 
 DESCRICAO_BOT = (
-    "O AnaliseR transforma o áudio de uma conversa com cliente em um relatório de MVP. "
-    "Envie uma mensagem de voz e receba o escopo da versão 1, o que fica de fora, a stack sugerida, "
-    "um roadmap passo a passo e os critérios de aceite. Depois, converse sobre a reunião ou peça o PDF. "
+    "O AnaliseR organiza as reuniões por cliente. "
+    "Escolha o cliente pelo nome ou pelo código no menu, depois envie o áudio. "
+    "O relatório traz o escopo da versão 1, a stack, o roadmap e os critérios de aceite. "
     "O uso exige autorização do administrador."
 )
 
