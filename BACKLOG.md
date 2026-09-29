@@ -519,3 +519,22 @@ Itens que não surgiram da análise de segurança e correção de defeitos — s
 - Escolha de modelo por usuário (hoje `GROQ_MODEL` é global).
 - Métricas de uso por usuário.
 - Multi-tenant / múltiplas prefeituras.
+
+---
+
+## 7. Entregue
+
+### FEAT-006 · Relatório parcial e planos de ação
+
+A análise não trava a stack nem escreve ticket enquanto faltar uma decisão que muda a tecnologia (plataforma, dados, integração ou quem usa). A mesma reunião guarda os dois momentos.
+
+- **Banco:** `reunioes.situacao` (`parcial` ou `fechada`), migração `0003_situacao_reuniao` em `backend/migracoes.py`. Reunião já existente entra como `fechada`. `atualizar_reuniao` reescreve o mesmo número; a resposta do desenvolvedor vai para a transcrição.
+- **Documento:** `analisar` (`backend/bot.py`) pede à Groq a primeira linha `SITUACAO: parcial` ou `SITUACAO: fechada`. O parser tira essa linha antes de gravar. No parcial, a seção "Planos de ação" é descartada se o modelo a escrever.
+- **Parcial:** Entendido, Stack provisória, no máximo duas perguntas com duas opções, Pontos em aberto. O Telegram manda os botões e "Fechar mesmo assim". A ficha mostra `Reunião N · aberta` e o botão Continuar. O PDF avisa que a análise está aberta.
+- **Fechado:** seções do MVP mais "Planos de ação". Cada ticket diz o que construir, quando está pronto e de qual outro depende. O que continuar sem resposta fica em "Pontos em aberto" e não vira ticket. "Stack sugerida" cita o que veio de `padrao_stack/STACK_PADRAO.md` e o que foi trocado.
+
+**Aceite:**
+- [x] Lacuna que muda a stack grava relatório parcial, sem planos de ação.
+- [x] Resposta do desenvolvedor atualiza a mesma reunião.
+- [x] Fechamento, ou "Fechar mesmo assim", substitui o parcial pelo relatório com planos de ação.
+- [x] Reunião anterior à migração permanece `fechada`.

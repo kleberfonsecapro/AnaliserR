@@ -30,9 +30,11 @@ from auth import hash_senha
 from database import db
 from database import normalizar_pesquisa
 from mensagens import (
+    ANALISE_ABERTA,
     AUDIO_SEM_CLIENTE,
     CLIENTE_PRONTO_AUDIO,
     CLIENTE_SALVO,
+    ESCOLHA_DA_ANALISE,
     CONFIRMAR_CLIENTE,
     CONFIRMAR_CLIENTE_DESCONHECIDO,
     MENU_CLIENTE_DETALHE,
@@ -77,21 +79,15 @@ LIMITE_TELEGRAM = 4096
 # Estados da conversa: menu de clientes e gravação de nova reunião.
 ESCOLHER_CLIENTE, CLIENTE_NOVA_REUNIAO, CONFIRMAR_NUMERO = 0, 1, 2
 AGUARDAR_AUDIO, ESCOLHER_CLIENTE_DO_AUDIO, PEDIR_NOME = 3, 4, 5
+AGUARDAR_RESPOSTA = 6
 
-SYSTEM_PROMPT = """Você é o tech lead de IA e analista de requisitos do AnaliseR.
-Recebe a transcrição de uma conversa com o cliente e devolve um relatório em Markdown.
-
-Regras:
-- Extraia só o necessário para um produto mínimo viável.
-- Corte funcionalidades que não são essenciais para a primeira versão e liste-as em "Fora da versão 1".
-- Não invente requisitos que não estejam na transcrição. O que faltar fica em "Pontos em aberto".
+_REGRAS_STACK = """Regras da stack:
 - A stack padrão da organização é a primeira opção. Use-a sempre que servir ao pedido, sem listar dezenas de alternativas.
-- Se alguma tecnologia da stack padrão não servir ao pedido do cliente (aplicativo mobile nativo, IoT, machine learning, jogo, sistema embarcado), use o que servir e diga no topo da seção "Stack sugerida" qual tecnologia foi descartada e por quê, em uma ou duas frases. Sem justificativa, use a stack padrão.
-- O contrato de engenharia recebido é condição de entrega, não preferência. Converta cada uma das suas práticas em uma etapa concreta do "Roadmap passo a passo" e em um item verificável de "Critérios de aceite".
-- O relatório deve servir como guia para começar a desenvolver.
+- Se alguma tecnologia da stack padrão não servir ao pedido do cliente (aplicativo mobile nativo, IoT, machine learning, jogo, sistema embarcado), use o que servir e diga qual tecnologia foi descartada e por quê, em uma ou duas frases. Sem justificativa, use a stack padrão.
+- O contrato de engenharia recebido é condição de entrega, não preferência.
+- Não invente requisito que não esteja na transcrição nem nas respostas do desenvolvedor."""
 
-Use exatamente estas seções:
-# MVP
+_SECOES_FECHADAS = """# MVP
 ## Problema
 ## Usuários
 ## Escopo da versão 1
@@ -99,8 +95,83 @@ Use exatamente estas seções:
 ## Stack sugerida
 ## Roadmap passo a passo
 ## Critérios de aceite
+## Planos de ação
+## Pontos em aberto"""
+
+PROMPT_DECISAO = f"""Você é o tech lead de IA e analista de requisitos do AnaliseR.
+Recebe a transcrição de uma conversa com o cliente, e as respostas do desenvolvedor quando já houver.
+
+A primeira linha da resposta é exatamente uma destas, sem markdown e sem texto antes:
+SITUACAO: parcial
+SITUACAO: fechada
+
+Escolha parcial quando faltar uma decisão que muda a tecnologia: plataforma, dados, integração ou quem usa o sistema. Detalhe de tela, cor, texto ou nome de campo não segura o fechamento.
+
+Se escolher parcial, depois da primeira linha use exatamente estas seções e nenhuma outra:
+# Análise aberta
+## Entendido
+## Stack provisória
+## Perguntas
 ## Pontos em aberto
-"""
+
+Em Stack provisória, não tranque a stack. Diga o que a stack padrão cobriria e o que ainda depende da resposta.
+Em Perguntas, no máximo duas, a mais importante primeiro. Cada uma neste formato, com duas opções curtas:
+1. Enunciado?
+- A: opção
+- B: opção
+É proibido escrever a seção Planos de ação.
+
+Se escolher fechada, depois da primeira linha use exatamente estas seções:
+{_SECOES_FECHADAS}
+
+No documento fechado:
+- Extraia só o necessário para um produto mínimo viável.
+- Corte o que não é essencial e liste em Fora da versão 1.
+- O que faltar fica em Pontos em aberto e não vira ticket.
+- No topo de Stack sugerida, diga o que veio da stack padrão e o que foi trocado, com o motivo.
+- Converta cada prática do contrato de engenharia em uma etapa do Roadmap e em um item verificável dos Critérios de aceite.
+- Em Planos de ação, cada ticket é uma fatia vertical pronta para desenvolver, nesta forma:
+### T1. Título
+- Construir: o que entra nesta fatia, de ponta a ponta
+- Pronto quando: como saber que acabou
+- Depende de: Tn, ou nenhum
+Não escreva ticket para ponto em aberto.
+
+{_REGRAS_STACK}"""
+
+PROMPT_FECHADO = f"""Você é o tech lead de IA e analista de requisitos do AnaliseR.
+A análise está sendo fechada agora, mesmo que ainda exista lacuna. Não faça perguntas.
+
+A primeira linha da resposta é exatamente, sem markdown e sem texto antes:
+SITUACAO: fechada
+
+Depois use exatamente estas seções:
+{_SECOES_FECHADAS}
+
+- Extraia só o necessário para um produto mínimo viável.
+- Corte o que não é essencial e liste em Fora da versão 1.
+- Lacuna que sobrar vai para Pontos em aberto, sem ticket.
+- No topo de Stack sugerida, diga o que veio da stack padrão e o que foi trocado, com o motivo.
+- Converta cada prática do contrato de engenharia em uma etapa do Roadmap e em um item verificável dos Critérios de aceite.
+- Em Planos de ação, cada ticket é uma fatia vertical pronta para desenvolver, nesta forma:
+### T1. Título
+- Construir: o que entra nesta fatia, de ponta a ponta
+- Pronto quando: como saber que acabou
+- Depende de: Tn, ou nenhum
+
+{_REGRAS_STACK}"""
+
+_LINHA_SITUACAO = re.compile(r"^SITUACAO:\s*(parcial|fechada)\s*$", re.IGNORECASE)
+_SECAO_PLANOS = re.compile(r"^##\s+Planos de ação\s*$", re.IGNORECASE)
+_SECAO_PERGUNTAS = re.compile(r"^##\s+Perguntas\s*$", re.IGNORECASE)
+_TITULO_SECAO = re.compile(r"^#{1,2}\s+")
+_LINHA_PERGUNTA = re.compile(r"^(\d+)\.\s+(.+)$")
+_LINHA_OPCAO = re.compile(r"^[-*]\s+([A-Za-z])\s*[:.)-]\s+(.+)$")
+_CODIGO_OPCAO = re.compile(r"^(\d+)([A-Za-z])$")
+_PEDIDO_FECHAR = re.compile(
+    r"^(fechar|fecha|pode fechar|fechar mesmo assim|encerrar)( a an[aá]lise)?$",
+    re.IGNORECASE,
+)
 
 _groq: AsyncGroq | None = None
 
@@ -230,24 +301,104 @@ async def identificar_cliente(transcricao: str) -> tuple[str | None, str]:
     return nome, trecho
 
 
-async def analisar(transcricao: str) -> str:
+def interpretar_relatorio(conteudo: str, fechar: bool) -> tuple[str, str]:
+    """Separa a situação da primeira linha e devolve (markdown, situacao)."""
+    linhas = conteudo.strip().splitlines()
+    situacao = "fechada"
+    corpo = linhas
+    if linhas:
+        achou = _LINHA_SITUACAO.match(linhas[0].strip())
+        if achou:
+            situacao = achou.group(1).lower()
+            corpo = linhas[1:]
+            while corpo and not corpo[0].strip():
+                corpo = corpo[1:]
+    if fechar:
+        situacao = "fechada"
+    texto = "\n".join(corpo).strip()
+    if situacao == "parcial":
+        texto = _sem_planos_de_acao(texto)
+    if not texto:
+        raise RuntimeError("a Groq devolveu um relatório vazio")
+    return texto, situacao
+
+
+def _sem_planos_de_acao(texto: str) -> str:
+    """Tira a seção de tickets se o modelo a escrever num relatório ainda aberto."""
+    saida: list[str] = []
+    pulando = False
+    for linha in texto.splitlines():
+        if _SECAO_PLANOS.match(linha.strip()):
+            pulando = True
+            continue
+        if pulando and _TITULO_SECAO.match(linha.strip()):
+            pulando = False
+        if not pulando:
+            saida.append(linha)
+    return "\n".join(saida).strip()
+
+
+def extrair_perguntas(relatorio: str) -> list[dict]:
+    """Perguntas do relatório parcial, cada uma com até duas opções."""
+    dentro = False
+    perguntas: list[dict] = []
+    for linha in relatorio.splitlines():
+        titulo = linha.strip()
+        if _TITULO_SECAO.match(titulo) and titulo.startswith("##"):
+            dentro = bool(_SECAO_PERGUNTAS.match(titulo))
+            continue
+        if not dentro:
+            continue
+        pergunta = _LINHA_PERGUNTA.match(titulo)
+        if pergunta:
+            perguntas.append({
+                "n": int(pergunta.group(1)),
+                "texto": pergunta.group(2).strip(),
+                "opcoes": [],
+            })
+            continue
+        opcao = _LINHA_OPCAO.match(titulo)
+        if opcao and perguntas and len(perguntas[-1]["opcoes"]) < 2:
+            perguntas[-1]["opcoes"].append((opcao.group(1).upper(), opcao.group(2).strip()))
+    return [item for item in perguntas if item["opcoes"]][:2]
+
+
+def rotulo_da_opcao(relatorio: str, codigo_opcao: str) -> str:
+    """Texto que entra na transcrição quando o dev toca numa opção."""
+    achou = _CODIGO_OPCAO.match(codigo_opcao.strip())
+    if not achou:
+        return codigo_opcao
+    numero = int(achou.group(1))
+    letra = achou.group(2).upper()
+    for pergunta in extrair_perguntas(relatorio):
+        if pergunta["n"] != numero:
+            continue
+        for opcao_letra, texto in pergunta["opcoes"]:
+            if opcao_letra == letra:
+                return f"{numero}{letra}: {texto}"
+    return f"Pergunta {numero}, opção {letra}"
+
+
+async def analisar(transcricao: str, fechar: bool = False) -> tuple[str, str]:
+    """Devolve (relatório, situacao). Com fechar=True, o documento sai fechado."""
     assert _groq is not None
     referencia = referencia_mod.hash_referencia()
-    logger.info("analisando com a referência %s", referencia)
+    logger.info("analisando com a referência %s (fechar=%s)", referencia, fechar)
     mensagens = [
         *referencia_mod.mensagens_de_referencia(),
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": PROMPT_FECHADO if fechar else PROMPT_DECISAO},
         {"role": "user", "content": f"Transcrição do áudio do cliente:\n\n{transcricao}"},
     ]
     resposta = await _groq.chat.completions.create(
         model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
         temperature=0.2,
+        max_tokens=8000,
         messages=mensagens,
     )
     conteudo = resposta.choices[0].message.content
-    if not conteudo:
+    if not conteudo or not conteudo.strip():
         raise RuntimeError("a Groq devolveu um relatório vazio")
-    return conteudo.strip()
+    return interpretar_relatorio(conteudo, fechar)
 
 
 CONVERSA_PROMPT = """Você é o AnaliseR no Telegram, falando com o desenvolvedor.
@@ -255,15 +406,22 @@ O relatório da reunião já está salvo abaixo. Responda em português, em text
 Use só o que está nesse relatório. Se a resposta não estiver nele, diga que ficou em aberto.
 Seja direto. Não repita o relatório inteiro."""
 
+CONVERSA_PARCIAL = (
+    CONVERSA_PROMPT
+    + "\nEste relatório ainda está aberto. Não trate como especificação fechada"
+    " e não invente planos de ação."
+)
 
-async def conversar(pergunta: str, relatorio: str, rotulo: str) -> str:
+
+async def conversar(pergunta: str, relatorio: str, rotulo: str, situacao: str = "fechada") -> str:
     assert _groq is not None
+    prompt = CONVERSA_PARCIAL if situacao == "parcial" else CONVERSA_PROMPT
     resposta = await _groq.chat.completions.create(
         model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
         temperature=0.2,
         max_tokens=2000,
         messages=[
-            {"role": "system", "content": CONVERSA_PROMPT},
+            {"role": "system", "content": prompt},
             {
                 "role": "user",
                 "content": f"{rotulo}\n\nRelatório salvo:\n\n{relatorio}\n\nPedido do desenvolvedor:\n{pergunta}",
@@ -307,11 +465,34 @@ def _teclado_ficha(cliente: asyncpg.Record, reunioes: list) -> InlineKeyboardMar
     linhas = [[InlineKeyboardButton("Nova reunião", callback_data=f"n:{codigo}")]]
     for reuniao in reunioes:
         numero = reuniao["numero"]
-        linhas.append([
-            InlineKeyboardButton(f"Reunião {numero}", callback_data=f"a:{codigo}:{numero}"),
+        aberta = reuniao["situacao"] == "parcial"
+        rotulo = f"Reunião {numero} · aberta" if aberta else f"Reunião {numero}"
+        linha = [
+            InlineKeyboardButton(rotulo, callback_data=f"a:{codigo}:{numero}"),
             InlineKeyboardButton("PDF", callback_data=f"p:{codigo}:{numero}"),
-        ])
+        ]
+        if aberta:
+            linha.append(InlineKeyboardButton("Continuar", callback_data=f"k:{codigo}:{numero}"))
+        linhas.append(linha)
     linhas.append([InlineKeyboardButton("Voltar aos clientes", callback_data="menu")])
+    return InlineKeyboardMarkup(linhas)
+
+
+def _teclado_perguntas(codigo: str, numero: int, relatorio: str) -> InlineKeyboardMarkup:
+    linhas = []
+    for pergunta in extrair_perguntas(relatorio):
+        for letra, texto in pergunta["opcoes"]:
+            rotulo = f"{pergunta['n']}{letra}. {texto}"
+            if len(rotulo) > 40:
+                rotulo = rotulo[:39] + "…"
+            linhas.append([InlineKeyboardButton(
+                rotulo,
+                callback_data=f"q:{codigo}:{numero}:{pergunta['n']}{letra}",
+            )])
+    linhas.append([InlineKeyboardButton(
+        "Fechar mesmo assim",
+        callback_data=f"f:{codigo}:{numero}",
+    )])
     return InlineKeyboardMarkup(linhas)
 
 
@@ -345,10 +526,11 @@ async def classificar(telegram_user_id: int) -> Acesso:
 
 
 def _salvar_no_contexto(context: ContextTypes.DEFAULT_TYPE, relatorio: str, transcricao: str,
-                        nome: str | None) -> None:
+                        nome: str | None, situacao: str) -> None:
     context.user_data["relatorio_pendente"] = relatorio
     context.user_data["transcricao_pendente"] = transcricao
     context.user_data["nome_sugerido"] = nome
+    context.user_data["situacao_pendente"] = situacao
 
 
 async def _gravar_reuniao(context: ContextTypes.DEFAULT_TYPE, cliente: asyncpg.Record,
@@ -362,13 +544,14 @@ async def _gravar_reuniao(context: ContextTypes.DEFAULT_TYPE, cliente: asyncpg.R
     if not relatorio:
         return None
     transcricao = context.user_data.pop("transcricao_pendente", None)
+    situacao = context.user_data.pop("situacao_pendente", "fechada")
     context.user_data.pop("nome_sugerido", None)
     usuario_id = context.user_data.get("telegram_user_id")
     if numero is None:
         numero = await db.proximo_numero_reuniao(cliente["id"])
     try:
         await db.inserir_reuniao(
-            cliente["id"], usuario_id, numero, relatorio, transcricao
+            cliente["id"], usuario_id, numero, relatorio, transcricao, situacao
         )
     except asyncpg.UniqueViolationError:
         # Outra reunião entrou entre a reserva e a gravação: o número reservado
@@ -379,7 +562,7 @@ async def _gravar_reuniao(context: ContextTypes.DEFAULT_TYPE, cliente: asyncpg.R
         numero = await db.proximo_numero_reuniao(cliente["id"])
         try:
             await db.inserir_reuniao(
-                cliente["id"], usuario_id, numero, relatorio, transcricao
+                cliente["id"], usuario_id, numero, relatorio, transcricao, situacao
             )
         except Exception:
             logger.exception(
@@ -656,8 +839,10 @@ async def ao_toque(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
         if dado in {"menu", "novo"} or dado.startswith(("c:", "n:")):
             return await _toque_cliente(update, context, dado)
-        if dado.startswith(("a:", "p:")):
-            return await _toque_reuniao(update, dado)
+        if dado.startswith(("a:", "p:", "k:")):
+            return await _toque_reuniao(update, context, dado)
+        if dado.startswith(("q:", "f:")):
+            return await _toque_decisao(update, context, dado)
     except Exception:
         logger.exception("falha ao tratar o botão %s", dado)
         await responder(update, "Não consegui abrir isso. Tente de novo.")
@@ -681,7 +866,7 @@ async def _toque_cliente(update: Update, context: ContextTypes.DEFAULT_TYPE, dad
     return ESCOLHER_CLIENTE
 
 
-async def _toque_reuniao(update: Update, dado: str) -> int:
+async def _toque_reuniao(update: Update, context: ContextTypes.DEFAULT_TYPE, dado: str) -> int:
     acao, codigo, bruto = dado.split(":", 2)
     try:
         numero = int(bruto)
@@ -701,6 +886,15 @@ async def _toque_reuniao(update: Update, dado: str) -> int:
     if acao == "p":
         await _enviar_pdf(update, registro, contexto, quando, codigo)
         return ESCOLHER_CLIENTE
+    if acao == "k":
+        if registro["situacao"] != "parcial":
+            await responder(update, f"*{_md(cliente['nome'])}* ({_md(codigo)}) — reunião {numero} já está fechada.")
+            await enviar_relatorio(update, registro["relatorio_gerado"])
+            return ESCOLHER_CLIENTE
+        return await _entregar_analise(
+            update, context, cliente, numero, registro["relatorio_gerado"], "parcial",
+            registro["transcricao"] or "",
+        )
     await responder(update, f"*{_md(cliente['nome'])}* ({_md(codigo)}) — reunião {numero}")
     await enviar_relatorio(update, registro["relatorio_gerado"])
     return ESCOLHER_CLIENTE
@@ -767,7 +961,7 @@ async def ao_receber_texto(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.message.reply_text(f"Vou olhar: {contexto}.")
     try:
         resposta = await conversar(texto, registro["relatorio_gerado"],
-                                   f"{contexto}, de {quando}")
+                                   f"{contexto}, de {quando}", registro["situacao"])
     except Exception:
         logger.exception("falha ao conversar sobre a reunião %s do cliente %s",
                          numero, cliente["codigo"])
@@ -842,11 +1036,16 @@ async def _enviar_pdf(update: Update, registro: asyncpg.Record, contexto: str, q
     numero = registro["numero"]
     await alvo.reply_text(f"Estou gerando o PDF: {contexto}.")
     try:
-        pdf = gerar_pdf(registro["relatorio_gerado"], numero, registro["data_criacao"])
+        situacao = registro["situacao"]
+        pdf = gerar_pdf(registro["relatorio_gerado"], numero, registro["data_criacao"], situacao)
         nome = f"AnaliseR-{cliente_codigo}-reuniao-{numero}.pdf"
+        if situacao == "parcial":
+            legenda = "Relatório parcial. A análise ainda está aberta."
+        else:
+            legenda = "Relatório e roadmap."
         await alvo.reply_document(
             document=InputFile(pdf, filename=nome),
-            caption=f"{contexto}, de {quando}. Relatório e roadmap.",
+            caption=f"{contexto}, de {quando}. {legenda}",
         )
     except Exception:
         logger.exception("falha ao gerar o PDF da reunião %s", registro["id"])
@@ -878,12 +1077,12 @@ async def ao_receber_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     processado = await _processar_audio(update, context, audio)
     if processado is None:
         return ConversationHandler.END
-    relatorio, transcricao = processado
+    relatorio, transcricao, situacao = processado
 
     # A reunião só é gravada depois que o dev confirmar o cliente. O relatório
     # fica pendente no user_data enquanto isso.
     nome, trecho = await identificar_cliente(transcricao)
-    _salvar_no_contexto(context, relatorio, transcricao, nome)
+    _salvar_no_contexto(context, relatorio, transcricao, nome, situacao)
     await _convidar_confirmar_cliente(update, context, nome, trecho)
     return ESCOLHER_CLIENTE_DO_AUDIO
 
@@ -904,7 +1103,7 @@ async def _liberado(update: Update, usuario_id: int) -> bool:
 
 
 async def _processar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                           audio) -> tuple[str, str] | None:
+                           audio) -> tuple[str, str, str] | None:
     """Baixa, transcreve e gera o relatório. Devolve None se não deu para seguir.
 
     Usa semáforo para limitar processamento concorrente (SEC-003).
@@ -912,7 +1111,7 @@ async def _processar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE,
     assert update.message is not None
     await _inicializar_limites()
     caminho = Path("/tmp") / f"analiser-{audio.file_unique_id}.ogg"
-    await update.message.reply_text("Recebi o áudio. Estou transcrevendo e montando o MVP.")
+    await update.message.reply_text("Recebi o áudio. Estou transcrevendo e analisando.")
     async with _semaforo_audio:
         try:
             arquivo = await context.bot.get_file(audio.file_id)
@@ -921,7 +1120,7 @@ async def _processar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE,
             if not transcricao:
                 await update.message.reply_text("Não consegui ouvir conteúdo nesse áudio.")
                 return None
-            relatorio = await analisar(transcricao)
+            relatorio, situacao = await analisar(transcricao)
         except Exception:
             logger.exception("falha ao processar áudio do usuário %s",
                              update.effective_user.id if update.effective_user else "?")
@@ -932,7 +1131,7 @@ async def _processar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 caminho.unlink()
                 logger.info("arquivo temporário removido: %s", caminho.name)
     _registrar_audio_processado(update)
-    return relatorio, transcricao
+    return relatorio, transcricao, situacao
 
 
 async def _convidar_confirmar_cliente(update: Update, context: ContextTypes.DEFAULT_TYPE,
@@ -1015,21 +1214,143 @@ async def escolher_cliente_do_audio(update: Update, context: ContextTypes.DEFAUL
     return await _concluir_gravacao(update, context, encontrados[0])
 
 
-async def _concluir_gravacao(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                             cliente: asyncpg.Record) -> int:
-    relatorio = context.user_data.get("relatorio_pendente")
-    reservado = context.user_data.pop("numero_reservado", None)
-    salvo = await _gravar_reuniao(context, cliente, reservado)
-    if salvo is None:
-        await responder(update, "Não consegui salvar essa reunião. O relatório não foi perdido, tente de novo.")
-        return ESCOLHER_CLIENTE_DO_AUDIO
-    codigo, nome, numero = salvo
-    fonte = " (número reservado no /nova_reuniao)" if reservado is not None else ""
+async def _entregar_analise(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                            cliente: asyncpg.Record, numero: int, relatorio: str,
+                            situacao: str, transcricao: str, fonte: str = "") -> int:
+    """Manda o parcial com as perguntas, ou o final com os planos de ação."""
+    nome = cliente["nome"]
+    codigo = cliente["codigo"]
+    if situacao == "parcial":
+        context.user_data["cliente_nova_reuniao"] = cliente
+        context.user_data["numero_reservado"] = numero
+        context.user_data["transcricao_pendente"] = transcricao
+        await responder(update, ANALISE_ABERTA.format(nome=nome, codigo=codigo, numero=numero))
+        await enviar_relatorio(update, relatorio)
+        await responder(
+            update,
+            ESCOLHA_DA_ANALISE,
+            _teclado_perguntas(codigo, numero, relatorio),
+        )
+        return AGUARDAR_RESPOSTA
+    context.user_data.pop("cliente_nova_reuniao", None)
+    context.user_data.pop("numero_reservado", None)
+    context.user_data.pop("transcricao_pendente", None)
     await responder(update, CLIENTE_SALVO.format(
         nome=nome, codigo=codigo, numero=numero, fonte=fonte
     ))
     await enviar_relatorio(update, relatorio)
     return ConversationHandler.END
+
+
+async def _seguir_analise(update: Update, context: ContextTypes.DEFAULT_TYPE, codigo: str,
+                          numero: int, *, fechar: bool, resposta: str | None,
+                          opcao: str | None = None) -> int:
+    """Acrescenta a resposta na mesma reunião e gera o próximo documento."""
+    cliente = await db.buscar_cliente_por_codigo(codigo)
+    if cliente is None:
+        await responder(update, f"Não achei {codigo}.")
+        return ESCOLHER_CLIENTE
+    registro = await db.buscar_reuniao(cliente["id"], numero)
+    if registro is None:
+        await responder(update, f"{cliente['nome']} ({codigo}) não tem reunião {numero}.")
+        return ESCOLHER_CLIENTE
+    if registro["situacao"] == "fechada":
+        await responder(update, f"*{_md(cliente['nome'])}* ({_md(codigo)}) — reunião {numero} já está fechada.")
+        await enviar_relatorio(update, registro["relatorio_gerado"])
+        return ConversationHandler.END
+
+    transcricao = registro["transcricao"] or ""
+    if not fechar:
+        if opcao:
+            texto = rotulo_da_opcao(registro["relatorio_gerado"], opcao)
+        else:
+            texto = (resposta or "").strip()
+        if not texto:
+            await responder(update, "Escreva a resposta ou escolha um botão.")
+            return AGUARDAR_RESPOSTA
+        transcricao = transcricao.rstrip() + "\n\nResposta do desenvolvedor:\n" + texto
+
+    await responder(update, "Estou atualizando a análise.")
+    try:
+        relatorio, situacao = await analisar(transcricao, fechar=fechar)
+    except Exception:
+        logger.exception("falha ao atualizar a análise da reunião %s de %s", numero, codigo)
+        await responder(update, "Não consegui atualizar a análise. A versão aberta continua salva.")
+        return AGUARDAR_RESPOSTA
+    try:
+        await db.atualizar_reuniao(cliente["id"], numero, relatorio, transcricao, situacao)
+    except Exception:
+        logger.exception("falha ao gravar a atualização da reunião %s de %s", numero, codigo)
+        await responder(update, "Não consegui salvar a atualização. Tente de novo.")
+        return AGUARDAR_RESPOSTA
+    return await _entregar_analise(
+        update, context, cliente, numero, relatorio, situacao, transcricao
+    )
+
+
+async def _toque_decisao(update: Update, context: ContextTypes.DEFAULT_TYPE, dado: str) -> int:
+    if dado.startswith("f:"):
+        _, codigo, bruto = dado.split(":", 2)
+        opcao = None
+        fechar = True
+    else:
+        partes = dado.split(":", 3)
+        if len(partes) != 4:
+            await responder(update, "Não consegui ler essa opção. Responda em texto.")
+            return AGUARDAR_RESPOSTA
+        _, codigo, bruto, opcao = partes
+        fechar = False
+    try:
+        numero = int(bruto)
+    except ValueError:
+        await responder(update, "Não consegui abrir essa reunião.")
+        return ESCOLHER_CLIENTE
+    return await _seguir_analise(
+        update, context, codigo, numero, fechar=fechar, resposta=None, opcao=opcao
+    )
+
+
+async def receber_resposta_analise(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.message is None:
+        return AGUARDAR_RESPOSTA
+    texto = (update.message.text or "").strip()
+    cliente = context.user_data.get("cliente_nova_reuniao")
+    numero = context.user_data.get("numero_reservado")
+    if cliente is None or numero is None:
+        await responder(update, "Perdi a análise aberta. Abra a ficha do cliente e toque em Continuar.")
+        return ESCOLHER_CLIENTE
+    fechar = bool(_PEDIDO_FECHAR.match(texto))
+    return await _seguir_analise(
+        update, context, cliente["codigo"], int(numero),
+        fechar=fechar, resposta=None if fechar else texto,
+    )
+
+
+async def _audio_durante_analise(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    del context
+    if update.message is not None:
+        await update.message.reply_text(
+            "A análise está aberta. Responda em texto ou nos botões. "
+            "Um áudio novo entra em outra reunião, pelo menu."
+        )
+    return AGUARDAR_RESPOSTA
+
+
+async def _concluir_gravacao(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                             cliente: asyncpg.Record) -> int:
+    relatorio = context.user_data.get("relatorio_pendente")
+    transcricao = context.user_data.get("transcricao_pendente") or ""
+    situacao = context.user_data.get("situacao_pendente", "fechada")
+    reservado = context.user_data.pop("numero_reservado", None)
+    salvo = await _gravar_reuniao(context, cliente, reservado)
+    if salvo is None:
+        await responder(update, "Não consegui salvar essa reunião. O relatório não foi perdido, tente de novo.")
+        return ESCOLHER_CLIENTE_DO_AUDIO
+    _codigo, _nome, numero = salvo
+    fonte = " (número reservado no /nova_reuniao)" if reservado is not None else ""
+    return await _entregar_analise(
+        update, context, cliente, numero, relatorio or "", situacao, transcricao, fonte
+    )
 
 
 async def audio_da_nova_reuniao(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1053,21 +1374,18 @@ async def audio_da_nova_reuniao(update: Update, context: ContextTypes.DEFAULT_TY
     processado = await _processar_audio(update, context, audio)
     if processado is None:
         return AGUARDAR_AUDIO
-    relatorio, transcricao = processado
+    relatorio, transcricao, situacao = processado
 
-    numero = context.user_data.pop("numero_reservado", None)
-    _salvar_no_contexto(context, relatorio, transcricao, cliente["nome"])
+    numero = context.user_data.get("numero_reservado")
+    _salvar_no_contexto(context, relatorio, transcricao, cliente["nome"], situacao)
     salvo = await _gravar_reuniao(context, cliente, numero)
     if salvo is None:
         await responder(update, "Não consegui salvar essa reunião. Tente de novo.")
         return AGUARDAR_AUDIO
-    codigo, nome, numero = salvo
-    await responder(update, CLIENTE_SALVO.format(
-        nome=nome, codigo=codigo, numero=numero, fonte=""
-    ))
-    await enviar_relatorio(update, relatorio)
-    context.user_data.pop("cliente_nova_reuniao", None)
-    return ConversationHandler.END
+    _codigo, _nome, numero = salvo
+    return await _entregar_analise(
+        update, context, cliente, numero, relatorio, situacao, transcricao
+    )
 
 
 CANCELAR = CommandHandler("cancelar", cancelar)
@@ -1092,7 +1410,10 @@ async def _texto_inesperado_aguardando(update: Update, context: ContextTypes.DEF
 
 
 def _toque() -> CallbackQueryHandler:
-    return CallbackQueryHandler(ao_toque, pattern=r"^(menu|novo|c:.+|n:.+|a:.+:\d+|p:.+:\d+)$")
+    return CallbackQueryHandler(
+        ao_toque,
+        pattern=r"^(menu|novo|c:.+|n:.+|a:.+:\d+|p:.+:\d+|k:.+:\d+|f:.+:\d+|q:.+:\d+:\d+[A-Za-z])$",
+    )
 
 
 def _conversa_clientes() -> ConversationHandler:
@@ -1134,6 +1455,11 @@ def _conversa_clientes() -> ConversationHandler:
                 _toque(),
                 MessageHandler(filters.VOICE | filters.AUDIO, audio_sem_cliente),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receber_nome_novo_cliente),
+            ],
+            AGUARDAR_RESPOSTA: [
+                _toque(),
+                MessageHandler(filters.VOICE | filters.AUDIO, _audio_durante_analise),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receber_resposta_analise),
             ],
         },
         fallbacks=[CANCELAR],

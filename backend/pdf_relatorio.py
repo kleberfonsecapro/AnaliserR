@@ -119,7 +119,7 @@ def _escrever_bloco(pdf: FPDF, linha: str) -> None:
     pdf.multi_cell(0, 6, _limpar(texto))
 
 
-def gerar_pdf(relatorio: str, numero: int, quando: datetime) -> bytes:
+def gerar_pdf(relatorio: str, numero: int, quando: datetime, situacao: str = "fechada") -> bytes:
     if not _FONTE.is_file() or not _FONTE_NEGRITO.is_file():
         raise RuntimeError("fonte do PDF não encontrada")
     pdf = _Relatorio()
@@ -129,7 +129,14 @@ def gerar_pdf(relatorio: str, numero: int, quando: datetime) -> bytes:
     pdf.add_page()
     pdf.set_font("DejaVu", "", 11)
     pdf.set_text_color(92, 107, 102)
-    pdf.multi_cell(0, 6, f"Reunião {numero}  ·  {formatar_data(quando)}")
+    if situacao == "parcial":
+        cabecalho = (
+            f"Reunião {numero}  ·  {formatar_data(quando)}"
+            "  ·  Relatório parcial — análise aberta"
+        )
+    else:
+        cabecalho = f"Reunião {numero}  ·  {formatar_data(quando)}"
+    pdf.multi_cell(0, 6, cabecalho)
     pdf.ln(1)
 
     pendente: list[str] = []

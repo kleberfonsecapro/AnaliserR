@@ -231,14 +231,16 @@ class Database:
         numero: int,
         relatorio_gerado: str,
         transcricao: str | None = None,
+        situacao: str = "fechada",
     ) -> int:
         assert self.pool is not None
         async with self.pool.acquire() as conn:
             reuniao_id = await conn.fetchval(
                 """
                 INSERT INTO reunioes
-                    (cliente_id, telegram_user_id, numero, transcricao, relatorio_gerado)
-                VALUES ($1, $2, $3, $4, $5)
+                    (cliente_id, telegram_user_id, numero, transcricao,
+                     relatorio_gerado, situacao)
+                VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING id
                 """,
                 cliente_id,
@@ -246,6 +248,7 @@ class Database:
                 numero,
                 transcricao,
                 relatorio_gerado,
+                situacao,
             )
         logger.info(
             "reunião %s do cliente %s gravada para o usuário %s",
@@ -255,12 +258,44 @@ class Database:
         )
         return reuniao_id
 
+    async def atualizar_reuniao(
+        self,
+        cliente_id: int,
+        numero: int,
+        relatorio_gerado: str,
+        transcricao: str | None,
+        situacao: str,
+    ) -> None:
+        """Reescreve o relatório da mesma reunião. Não abre outro número."""
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            status = await conn.execute(
+                """
+                UPDATE reunioes
+                SET relatorio_gerado = $3, transcricao = $4, situacao = $5
+                WHERE cliente_id = $1 AND numero = $2
+                """,
+                cliente_id,
+                numero,
+                relatorio_gerado,
+                transcricao,
+                situacao,
+            )
+        if status == "UPDATE 0":
+            raise LookupError(f"reunião {numero} do cliente {cliente_id} não existe")
+        logger.info(
+            "reunião %s do cliente %s atualizada (%s)",
+            numero,
+            cliente_id,
+            situacao,
+        )
+
     async def listar_reunioes_do_cliente(self, cliente_id: int) -> list[asyncpg.Record]:
         assert self.pool is not None
         async with self.pool.acquire() as conn:
             return await conn.fetch(
                 """
-                SELECT id, numero, relatorio_gerado, transcricao, data_criacao
+                SELECT id, numero, relatorio_gerado, transcricao, data_criacao, situacao
                 FROM reunioes
                 WHERE cliente_id = $1
                 ORDER BY numero ASC
@@ -273,7 +308,7 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetchrow(
                 """
-                SELECT id, numero, relatorio_gerado, transcricao, data_criacao
+                SELECT id, numero, relatorio_gerado, transcricao, data_criacao, situacao
                 FROM reunioes
                 WHERE cliente_id = $1 AND numero = $2
                 """,
@@ -295,7 +330,7 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetch(
                 """
-                SELECT r.id, r.numero, r.data_criacao, r.relatorio_gerado,
+                SELECT r.id, r.numero, r.data_criacao, r.relatorio_gerado, r.situacao,
                        c.id AS cliente_id, c.codigo AS cliente_codigo, c.nome AS cliente_nome
                 FROM reunioes r
                 JOIN clientes c ON c.id = r.cliente_id
@@ -311,11 +346,11 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetchrow(
                 """
-                SELECT r.numero, r.data_criacao, r.relatorio_gerado,
+                SELECT r.numero, r.data_criacao, r.relatorio_gerado, r.situacao,
                        r.total_reunioes, r.ultima_reuniao,
                        c.id AS cliente_id, c.id, c.codigo, c.nome
                 FROM (
-                    SELECT cliente_id, numero, data_criacao, relatorio_gerado,
+                    SELECT cliente_id, numero, data_criacao, relatorio_gerado, situacao,
                            COUNT(*) OVER (PARTITION BY cliente_id)::int AS total_reunioes,
                            MAX(numero) OVER (PARTITION BY cliente_id) AS ultima_reuniao
                     FROM reunioes

@@ -169,6 +169,14 @@ CLIENTE_SALVO = """*{nome}* ({codigo}) — reunião {numero} salva{fonte}
 
 O relatório abaixo é desta reunião."""
 
+ANALISE_ABERTA = """*{nome}* ({codigo}) — reunião {numero} em análise
+
+O relatório abaixo está aberto. Os planos de ação saem quando a análise fechar."""
+
+ESCOLHA_DA_ANALISE = """Responda no botão ou em texto.
+
+Se quiser o documento final agora, toque em *Fechar mesmo assim*."""
+
 CANCELADO = """Cancelado. Nada foi salvo.
 
 Pode mandar o áudio de novo quando quiser."""
@@ -268,10 +276,12 @@ def resumir_clientes(clientes: list) -> str:
 
 
 def listar_reunioes_menu(reunioes: list) -> str:
-    return "\n".join(
-        f"- Reunião {r['numero']} — {r['data_criacao'].strftime('%d/%m/%Y')}"
-        for r in reunioes
-    ) or "- Nenhuma reunião ainda."
+    linhas = []
+    for reuniao in reunioes:
+        aberta = " · aberta" if reuniao["situacao"] == "parcial" else ""
+        quando = reuniao["data_criacao"].strftime("%d/%m/%Y")
+        linhas.append(f"- Reunião {reuniao['numero']}{aberta} — {quando}")
+    return "\n".join(linhas) or "- Nenhuma reunião ainda."
 
 
 def listar_encontrados(clientes: list) -> str:

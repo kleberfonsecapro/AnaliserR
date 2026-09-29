@@ -19,6 +19,7 @@ logger = logging.getLogger("analiser.migracoes")
 
 MIGRACAO_0001_CLIENTES = "0001_clientes_e_reunioes"
 MIGRACAO_0002_NOME_UNICO = "0002_nome_cliente_unico"
+MIGRACAO_0003_SITUACAO = "0003_situacao_reuniao"
 
 
 async def aplicar(pool: asyncpg.Pool) -> None:
@@ -53,6 +54,14 @@ async def aplicar(pool: asyncpg.Pool) -> None:
                 MIGRACAO_0002_NOME_UNICO,
             )
             logger.info("migração %s aplicada", MIGRACAO_0002_NOME_UNICO)
+
+        if MIGRACAO_0003_SITUACAO not in aplicadas:
+            await _garantir_situacao_reuniao(conn)
+            await conn.execute(
+                "INSERT INTO migracoes_aplicadas (nome) VALUES ($1) ON CONFLICT DO NOTHING",
+                MIGRACAO_0003_SITUACAO,
+            )
+            logger.info("migração %s aplicada", MIGRACAO_0003_SITUACAO)
 
         await _garantir_indices_reunioes(conn)
 
@@ -213,6 +222,30 @@ async def _garantir_nome_cliente_unico(conn: asyncpg.Connection) -> None:
         """
         CREATE UNIQUE INDEX IF NOT EXISTS clientes_nome_normalizado_unico
             ON clientes (nome_normalizado)
+        """
+    )
+
+
+async def _garantir_situacao_reuniao(conn: asyncpg.Connection) -> None:
+    """Marca se o relatório da reunião ainda está aberto.
+
+    Reunião já gravada entra como fechada: o documento dela foi entregue como
+    final. Análise nova só nasce parcial quando o código pede isso.
+    """
+    await conn.execute(
+        """
+        ALTER TABLE reunioes
+            ADD COLUMN IF NOT EXISTS situacao TEXT NOT NULL DEFAULT 'fechada'
+        """
+    )
+    await conn.execute(
+        "ALTER TABLE reunioes DROP CONSTRAINT IF EXISTS reunioes_situacao_ok"
+    )
+    await conn.execute(
+        """
+        ALTER TABLE reunioes
+            ADD CONSTRAINT reunioes_situacao_ok
+            CHECK (situacao IN ('parcial', 'fechada'))
         """
     )
 
