@@ -3,6 +3,8 @@
 Documento gerado a partir da análise do código em 2026-09-28.
 Escopo analisado: `backend/` (bot, api, auth, database, init.sql), `frontend/` (src, nginx, Dockerfile), `docker-compose.yml`, `.env`.
 
+> **Auditoria de status em 2026-10-09:** cada card recebeu um marcador (✅ resolvido / 🟡 parcial / 🔴 aberto) com evidência no código atual. Resultado: 2 resolvidos, 8 parciais, 17 abertos (incluindo os P0 BUG-002, SEC-001 e SEC-002). Ordem de execução em [`TICKETS.md`](TICKETS.md).
+
 **Legenda de severidade**
 
 | Nível | Significado |
@@ -77,6 +79,8 @@ Browser ──► [frontend: nginx :80] ──/api/──► backend :8000
 
 ### BUG-001 · `garantir_admin` não promove o admin e reseta a senha a cada boot
 
+- **Status (🟡 PARCIAL — auditoria 2026-10-09):** Correção aplicada (database.py:412-435, commit cfcebeb); falta o teste automatizado do 4º aceite.
+
 - **Arquivo:** `backend/database.py:123-135`
 - **Severidade:** P0 · **Esforço:** S
 
@@ -103,6 +107,8 @@ Dois defeitos no mesmo statement:
 
 ### BUG-002 · `download_to_drive` bloqueia o event loop
 
+- **Status (🔴 ABERTO — auditoria 2026-10-09):** download_to_drive ainda bloqueia o loop (bot.py:1262).
+
 - **Arquivo:** `backend/bot.py:147`
 - **Severidade:** P0 · **Esforço:** S
 
@@ -121,6 +127,8 @@ await arquivo.download_to_drive(custom_path=str(caminho))
 ---
 
 ### SEC-001 · Backend exposto na internet sem TLS
+
+- **Status (🔴 ABERTO — auditoria 2026-10-09):** 8092 exposta no host (compose:34-35); nginx só listen 80 (frontend/nginx.conf:2).
 
 - **Arquivo:** `docker-compose.yml:33`
 - **Severidade:** P0 · **Esforço:** M
@@ -143,6 +151,8 @@ A API (login, CRUD de usuários) fica acessível diretamente, contornando o ngin
 
 ### SEC-002 · Sem rate limit no login — brute force
 
+- **Status (🔴 ABERTO — auditoria 2026-10-09):** POST /auth/login sem rate limit nem registro de tentativa (api.py:149-163).
+
 - **Arquivo:** `backend/api.py:132-146`
 - **Severidade:** P0 · **Esforço:** M
 
@@ -160,6 +170,8 @@ A API (login, CRUD de usuários) fica acessível diretamente, contornando o ngin
 
 ### SEC-003 · Sem cota nem limite de áudio no bot
 
+- **Status (✅ RESOLVIDO — auditoria 2026-10-09):** Limites de tamanho/duração, cooldown e semáforo implementados (bot.py:183-221, 1253-1277).
+
 - **Arquivos:** `backend/bot.py:121-164`
 - **Severidade:** P1 · **Esforço:** M
 
@@ -176,6 +188,8 @@ Não existe teto de duração, tamanho ou frequência por usuário. Um usuário 
 
 ### SEC-004 · Logout inexistente; JWT não revogável
 
+- **Status (🔴 ABERTO — auditoria 2026-10-09):** Logout só limpa o cliente (frontend/src/api.js:14-18); JWT sem revogação (auth.py:25-32).
+
 - **Arquivos:** `backend/auth.py`, `frontend/src/api.js:14-18`, `frontend/src/App.jsx:51-55`
 - **Severidade:** P1 · **Esforço:** M
 
@@ -190,6 +204,8 @@ Não existe teto de duração, tamanho ou frequência por usuário. Um usuário 
 ---
 
 ### SEC-005 · Container rodando como root
+
+- **Status (🔴 ABERTO — auditoria 2026-10-09):** backend/Dockerfile e frontend/Dockerfile sem USER não-root.
 
 - **Arquivos:** `backend/Dockerfile:1-15`, `frontend/Dockerfile:11-16`
 - **Severidade:** P1 · **Esforço:** S
@@ -206,6 +222,8 @@ Nenhum dos serviços define `USER`. O processo do backend e o worker do nginx ro
 
 ### SEC-006 · Headers de segurança e compressão ausentes no nginx
 
+- **Status (🔴 ABERTO — auditoria 2026-10-09):** frontend/nginx.conf sem headers de segurança, gzip ou Cache-Control.
+
 - **Arquivo:** `frontend/nginx.conf`
 - **Severidade:** P1 · **Esforço:** S
 
@@ -220,6 +238,8 @@ Sem `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`, `R
 ---
 
 ### OPS-001 · Polling do Telegram acoplado ao lifespan do FastAPI
+
+- **Status (🔴 ABERTO — auditoria 2026-10-09):** Bot e API no mesmo processo/event loop (bot.py:1625-1671); /health estático.
 
 - **Arquivo:** `backend/bot.py:174-206`
 - **Severidade:** P1 · **Esforço:** L
@@ -237,6 +257,8 @@ Bot e API compartilham o mesmo processo/event loop. Se o polling morrer, nada o 
 
 ### OPS-002 · `_garantir_niveis()` executa DDL a cada boot
 
+- **Status (🟡 PARCIAL — auditoria 2026-10-09):** Migrações versionadas (migracoes.py:25-67), mas _garantir_niveis() ainda dropa constraints a cada boot (database.py:93-114).
+
 - **Arquivo:** `backend/database.py:42-63`
 - **Severidade:** P1 · **Esforço:** M
 
@@ -253,6 +275,8 @@ Na **cada** subida o código faz `DROP CONSTRAINT` em todas as constraints de ch
 
 ### OPS-003 · Sem healthcheck no backend e no frontend
 
+- **Status (🔴 ABERTO — auditoria 2026-10-09):** Só db tem healthcheck; backend/frontend sem healthcheck e depends_on sem condition (compose:42-43).
+
 - **Arquivo:** `docker-compose.yml:18-41`
 - **Severidade:** P1 · **Esforço:** S
 
@@ -267,6 +291,8 @@ Só o `db` tem `healthcheck`. `frontend` usa `depends_on: [backend]` sem condiç
 ---
 
 ### OPS-004 · `analises_mvp` é tabela morta, com dado sensível e sem retenção
+
+- **Status (🟡 PARCIAL — auditoria 2026-10-09):** Migração 0001 moveu dados para reunioes (migracoes.py:107-169), mas analises_mvp segue no init.sql sem FK nem retenção.
 
 - **Arquivos:** `backend/init.sql:1-9`, `backend/database.py:65`
 - **Severidade:** P1 · **Esforço:** M
@@ -284,6 +310,8 @@ A tabela recebe o relatório de **todo** áudio processado, mas **nada a lê**: 
 
 ### FEAT-001 · Sessão de 5 minutos com mensagem hardcoded
 
+- **Status (🔴 ABERTO — auditoria 2026-10-09):** Texto fixo da sessão de 5 min no frontend (src/App.jsx:27-30).
+
 - **Arquivos:** `frontend/src/App.jsx:29`, `backend/auth.py:21-22`, `.env`
 - **Severidade:** P1 · **Esforço:** S
 
@@ -299,6 +327,8 @@ A tabela recebe o relatório de **todo** áudio processado, mas **nada a lê**: 
 
 ### FEAT-002 · Sem paginação em `GET /users`
 
+- **Status (🔴 ABERTO — auditoria 2026-10-09):** GET /users sem paginação (api.py:165-167); frontend renderiza tudo (Admin.jsx:42-49).
+
 - **Arquivo:** `backend/api.py:148-150`
 - **Severidade:** P1 · **Esforço:** S
 
@@ -313,6 +343,8 @@ A tabela recebe o relatório de **todo** áudio processado, mas **nada a lê**: 
 ---
 
 ### AUD-001 · Sem log de auditoria de mudanças de permissão
+
+- **Status (🔴 ABERTO — auditoria 2026-10-09):** Sem tabela de auditoria; só logger.info (api.py:186).
 
 - **Arquivos:** `backend/api.py:152-197`
 - **Severidade:** P1 · **Esforço:** M
@@ -331,6 +363,8 @@ Criação, edição e remoção de usuários só geram log de nível `INFO` com 
 
 ### SEC-007 · Backend sem `TrustedHostMiddleware` nem CORS explícito
 
+- **Status (🔴 ABERTO — auditoria 2026-10-09):** FastAPI sem TrustedHost/CORS explícito (bot.py:1670).
+
 - **Arquivo:** `backend/bot.py:209-210`
 - **Severidade:** P2 · **Esforço:** S
 
@@ -343,6 +377,8 @@ Criação, edição e remoção de usuários só geram log de nível `INFO` com 
 ---
 
 ### SEC-008 · SQL montado com `f-string` (whitelist, porém frágil)
+
+- **Status (🟡 PARCIAL — auditoria 2026-10-09):** f-strings SQL com whitelist imperativa persistem (database.py:499-504, 105).
 
 - **Arquivos:** `backend/database.py:199-204`, `backend/database.py:54`
 - **Severidade:** P2 · **Esforço:** S
@@ -363,6 +399,8 @@ Os **valores** são parametrizados corretamente e as chaves vêm de um `if` expl
 
 ### OPS-005 · `passlib` arquivado
 
+- **Status (🔴 ABERTO — auditoria 2026-10-09):** passlib[bcrypt]==1.7.4 + bcrypt==4.0.1 pinados (requirements.txt:7-8).
+
 - **Arquivos:** `backend/requirements.txt:7-8`
 - **Severidade:** P2 · **Esforço:** M
 
@@ -377,6 +415,8 @@ Os **valores** são parametrizados corretamente e as chaves vêm de um `if` expl
 ---
 
 ### OPS-006 · Sem testes, lint, CI ou README
+
+- **Status (🟡 PARCIAL — auditoria 2026-10-09):** README publicado; sem tests/, lint ou CI (.github).
 
 - **Arquivo:** repositório inteiro
 - **Severidade:** P2 · **Esforço:** L
@@ -394,6 +434,8 @@ Prioridade de cobertura: (a) matriz de RBAC em `backend/api.py` (10 regras, incl
 
 ### OPS-007 · Ausência de `.gitignore` com segredos reais no diretório
 
+- **Status (🟡 PARCIAL — auditoria 2026-10-09):** .gitignore criado; verificar histórico git por .env e rotacionar credenciais.
+
 - **Arquivo:** raiz do projeto
 - **Severidade:** P2 · **Esforço:** S
 
@@ -409,6 +451,8 @@ Não existe `.gitignore` e o `.env` contém credenciais reais de produção (tok
 ---
 
 ### OPS-008 · `docker-compose.yml` redundante e sem limites de recursos
+
+- **Status (🔴 ABERTO — auditoria 2026-10-09):** environment duplica env_file (compose:23-30); sem limites de recursos nem rotação de log.
 
 - **Arquivo:** `docker-compose.yml:18-41`
 - **Severidade:** P2 · **Esforço:** S
@@ -426,6 +470,8 @@ Não existe `.gitignore` e o `.env` contém credenciais reais de produção (tok
 
 ### FEAT-003 · Service worker com risco de servir bundle antigo
 
+- **Status (🔴 ABERTO — auditoria 2026-10-09):** CACHE manual 'analiser-v2' sem bump por build (frontend/public/sw.js:1).
+
 - **Arquivo:** `frontend/public/sw.js`
 - **Severidade:** P2 · **Esforço:** S
 
@@ -440,6 +486,8 @@ Não existe `.gitignore` e o `.env` contém credenciais reais de produção (tok
 ---
 
 ### FEAT-004 · Mensagem de sessão expirada e UX de erro frágeis
+
+- **Status (🟡 PARCIAL — auditoria 2026-10-09):** 401/403 tratados (src/api.js:29-43); falta AbortController no carregar() (Admin.jsx:47-49).
 
 - **Arquivos:** `frontend/src/api.js:29-32`, `frontend/src/App.jsx`
 - **Severidade:** P2 · **Esforço:** S
@@ -456,6 +504,8 @@ Não existe `.gitignore` e o `.env` contém credenciais reais de produção (tok
 
 ### FEAT-005 · Sem observabilidade
 
+- **Status (🔴 ABERTO — auditoria 2026-10-09):** Só basicConfig (bot.py:70-75); sem /metrics nem request id.
+
 - **Arquivos:** `backend/bot.py:18-23`
 - **Severidade:** P2 · **Esforço:** M
 
@@ -471,6 +521,8 @@ Logs em `INFO` com `basicConfig` e formato simples, sem request id, sem métrica
 
 ### DEV-001 · Diretório com typo no nome
 
+- **Status (🔴 ABERTO — auditoria 2026-10-09):** Diretório ainda bot_analiseR.
+
 - **Arquivo:** `bot_analiseR/`
 - **Severidade:** P3 · **Esforço:** S
 
@@ -482,6 +534,8 @@ Logs em `INFO` com `basicConfig` e formato simples, sem request id, sem métrica
 ---
 
 ### DEV-002 · Prompt do sistema sem versionamento nem few-shot
+
+- **Status (🟡 PARCIAL — auditoria 2026-10-09):** Referência extraída (referencia.py:252-255); prompts de decisão seguem no código (bot.py:106-167), sem versão gravada na reunião.
 
 - **Arquivo:** `backend/bot.py:26-46`
 - **Severidade:** P3 · **Esforço:** M
@@ -525,6 +579,8 @@ Itens que não surgiram da análise de segurança e correção de defeitos — s
 ## 7. Entregue
 
 ### FEAT-006 · Relatório parcial e planos de ação
+
+- **Status (✅ RESOLVIDO — auditoria 2026-10-09):** Migração 0003, parser SITUACAO, 'Fechar mesmo assim', pontos em aberto (bot.py:169-343, 1361-1470).
 
 A análise não trava a stack nem escreve ticket enquanto faltar uma decisão que muda a tecnologia (plataforma, dados, integração ou quem usa). A mesma reunião guarda os dois momentos.
 
