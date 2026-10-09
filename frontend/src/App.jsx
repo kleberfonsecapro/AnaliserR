@@ -26,7 +26,8 @@ export default function App() {
 
   function expirar() {
     setSessao(null);
-    setErro("A sessão de 5 minutos acabou. Entre de novo.");
+    const minutos = sessao?.minutosSessao ?? 5;
+    setErro(`A sessão de ${minutos} ${minutos === 1 ? "minuto" : "minutos"} acabou. Entre de novo.`);
   }
 
   async function aoEntrar(email, password) {
@@ -38,6 +39,7 @@ export default function App() {
       setSessao({
         expiraEm: Date.now() + resposta.expires_in * 1000,
         restante: resposta.expires_in,
+        minutosSessao: Math.max(1, Math.round(resposta.expires_in / 60)),
         papel: resposta.papel,
         usuarioId: resposta.usuario_id,
       });

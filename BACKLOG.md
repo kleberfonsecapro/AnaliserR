@@ -188,7 +188,7 @@ Não existe teto de duração, tamanho ou frequência por usuário. Um usuário 
 
 ### SEC-004 · Logout inexistente; JWT não revogável
 
-- **Status (🔴 ABERTO — auditoria 2026-10-09):** Logout só limpa o cliente (frontend/src/api.js:14-18); JWT sem revogação (auth.py:25-32).
+- **Status (✅ RESOLVIDO — onda 2, 2026-10-09):** JWT com `jti` + denylist `tokens_revogados` (migração 0006), `POST /auth/logout` e revogação no `painel_atual`; frontend revoga antes de sair. Refresh token rotativo é desnecessário com sessão de 5 min (decisão registrada). (auditoria 2026-10-09: estava aberto.)
 
 - **Arquivos:** `backend/auth.py`, `frontend/src/api.js:14-18`, `frontend/src/App.jsx:51-55`
 - **Severidade:** P1 · **Esforço:** M
@@ -257,7 +257,7 @@ Bot e API compartilham o mesmo processo/event loop. Se o polling morrer, nada o 
 
 ### OPS-002 · `_garantir_niveis()` executa DDL a cada boot
 
-- **Status (🟡 PARCIAL — auditoria 2026-10-09):** Migrações versionadas (migracoes.py:25-67), mas _garantir_niveis() ainda dropa constraints a cada boot (database.py:93-114).
+- **Status (✅ RESOLVIDO — onda 2, 2026-10-09):** `_garantir_niveis()` virou a migração 0004 (roda uma única vez); o boot não executa mais DDL destrutivo. (auditoria 2026-10-09: migrações versionadas já existiam.)
 
 - **Arquivo:** `backend/database.py:42-63`
 - **Severidade:** P1 · **Esforço:** M
@@ -292,7 +292,7 @@ Só o `db` tem `healthcheck`. `frontend` usa `depends_on: [backend]` sem condiç
 
 ### OPS-004 · `analises_mvp` é tabela morta, com dado sensível e sem retenção
 
-- **Status (🟡 PARCIAL — auditoria 2026-10-09):** Migração 0001 moveu dados para reunioes (migracoes.py:107-169), mas analises_mvp segue no init.sql sem FK nem retenção.
+- **Status (✅ RESOLVIDO — onda 2, 2026-10-09):** `analises_mvp` saiu do init.sql e é removida pela migração 0005 (dados já migrados para `reunioes` na 0001); retenção configurável via `RETENCAO_REUNIOES_DIAS` (0 = guarda). (auditoria 2026-10-09: dados já migrados.)
 
 - **Arquivos:** `backend/init.sql:1-9`, `backend/database.py:65`
 - **Severidade:** P1 · **Esforço:** M
@@ -310,7 +310,7 @@ A tabela recebe o relatório de **todo** áudio processado, mas **nada a lê**: 
 
 ### FEAT-001 · Sessão de 5 minutos com mensagem hardcoded
 
-- **Status (🔴 ABERTO — auditoria 2026-10-09):** Texto fixo da sessão de 5 min no frontend (src/App.jsx:27-30).
+- **Status (✅ RESOLVIDO — onda 2, 2026-10-09):** mensagem usa o `expires_in` real do backend (App.jsx) — alterar `JWT_EXPIRE_MINUTES` não gera texto incorreto.
 
 - **Arquivos:** `frontend/src/App.jsx:29`, `backend/auth.py:21-22`, `.env`
 - **Severidade:** P1 · **Esforço:** S
@@ -327,7 +327,7 @@ A tabela recebe o relatório de **todo** áudio processado, mas **nada a lê**: 
 
 ### FEAT-002 · Sem paginação em `GET /users`
 
-- **Status (🔴 ABERTO — auditoria 2026-10-09):** GET /users sem paginação (api.py:165-167); frontend renderiza tudo (Admin.jsx:42-49).
+- **Status (✅ RESOLVIDO — onda 2, 2026-10-09):** `GET /users` com `limit`(teto 200)/`offset`; `Admin.jsx` paginado (50 por página).
 
 - **Arquivo:** `backend/api.py:148-150`
 - **Severidade:** P1 · **Esforço:** S
@@ -344,7 +344,7 @@ A tabela recebe o relatório de **todo** áudio processado, mas **nada a lê**: 
 
 ### AUD-001 · Sem log de auditoria de mudanças de permissão
 
-- **Status (🔴 ABERTO — auditoria 2026-10-09):** Sem tabela de auditoria; só logger.info (api.py:186).
+- **Status (✅ RESOLVIDO — onda 2, 2026-10-09):** tabela `auditoria` (migração 0007, ator/ação/alvo/valores/IP), gravada em criar/atualizar/excluir usuário e tentativas negadas; coberto por teste.
 
 - **Arquivos:** `backend/api.py:152-197`
 - **Severidade:** P1 · **Esforço:** M
@@ -378,7 +378,7 @@ Criação, edição e remoção de usuários só geram log de nível `INFO` com 
 
 ### SEC-008 · SQL montado com `f-string` (whitelist, porém frágil)
 
-- **Status (🟡 PARCIAL — auditoria 2026-10-09):** f-strings SQL com whitelist imperativa persistem (database.py:499-504, 105).
+- **Status (✅ RESOLVIDO — onda 2, 2026-10-09):** `atualizar_usuario` usa whitelist declarativa `_CAMPOS_EDITAVEIS` com rejeição de campo desconhecido (ValueError) + teste; o DDL de constraint virou migração versionada (0004).
 
 - **Arquivos:** `backend/database.py:199-204`, `backend/database.py:54`
 - **Severidade:** P2 · **Esforço:** S

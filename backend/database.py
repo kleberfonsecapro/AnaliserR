@@ -63,7 +63,7 @@ class Database:
                 self.pool = await asyncpg.create_pool(dsn)
                 try:
                     await migracoes.aplicar(self.pool)
-                    await self._garantir_niveis()
+                    await self.expurgar_reunioes_antigas()
                 except Exception:
                     await self.pool.close()
                     self.pool = None
@@ -90,28 +90,19 @@ class Database:
             await self.pool.close()
             self.pool = None
 
-    async def _garantir_niveis(self) -> None:
+    async def expurgar_reunioes_antigas(self) -> None:
+        """Retenção de reuniões (OPS-004): apaga reuniões mais velhas que
+        RETENCAO_REUNIOES_DIAS. Padrão 0 = guarda para sempre."""
+        dias = int(os.environ.get("RETENCAO_REUNIOES_DIAS", "0"))
+        if dias <= 0:
+            return
         assert self.pool is not None
         async with self.pool.acquire() as conn:
-            restricoes = await conn.fetch(
-                """
-                SELECT conname
-                FROM pg_constraint
-                WHERE conrelid = 'usuarios'::regclass AND contype = 'c'
-                """
+            resultado = await conn.execute(
+                "DELETE FROM reunioes WHERE data_criacao < NOW() - make_interval(days => $1)",
+                dias,
             )
-            for restricao in restricoes:
-                await conn.execute(
-                    f'ALTER TABLE usuarios DROP CONSTRAINT "{restricao["conname"]}"'
-                )
-            await conn.execute("UPDATE usuarios SET papel = 'usuario' WHERE papel = 'user'")
-            await conn.execute(
-                """
-                ALTER TABLE usuarios
-                ADD CONSTRAINT usuarios_papel_check
-                CHECK (papel IN ('admin', 'gestor', 'usuario'))
-                """
-            )
+        logger.info("expurgo de reuniões (> %s dias): %s", dias, resultado)
 
     # ---------------------------------------------------------------- clientes
 
@@ -434,7 +425,7 @@ class Database:
             )
         logger.info("admin conferido para %s", email)
 
-    async def listar_usuarios(self) -> list[asyncpg.Record]:
+    async def listar_usuarios(self, limit: int = 50, offset: int = 0) -> list[asyncpg.Record]:
         assert self.pool is not None
         async with self.pool.acquire() as conn:
             return await conn.fetch(
@@ -442,7 +433,10 @@ class Database:
                 SELECT id, email, papel, telegram_user_id, pode_usar_bot
                 FROM usuarios
                 ORDER BY id
-                """
+                LIMIT $1 OFFSET $2
+                """,
+                limit,
+                offset,
             )
 
     async def criar_usuario(
@@ -468,23 +462,25 @@ class Database:
                 pode_usar_bot,
             )
 
+    # Colunas que a API pode alterar (whitelist declarativa — SEC-008). O SQL
+    # montado só junta nomes desta tabela; valores sempre vão por parâmetro.
+    _CAMPOS_EDITAVEIS = ("telegram_user_id", "pode_usar_bot", "papel")
+
     async def atualizar_usuario(
         self,
         usuario_id: int,
         campos: dict,
     ) -> asyncpg.Record | None:
         assert self.pool is not None
+        desconhecidos = set(campos) - set(self._CAMPOS_EDITAVEIS)
+        if desconhecidos:
+            raise ValueError(f"campos não editáveis: {sorted(desconhecidos)}")
         atribuicoes = []
         valores: list = []
-        if "telegram_user_id" in campos:
-            valores.append(campos["telegram_user_id"])
-            atribuicoes.append(f"telegram_user_id = ${len(valores)}")
-        if "pode_usar_bot" in campos:
-            valores.append(campos["pode_usar_bot"])
-            atribuicoes.append(f"pode_usar_bot = ${len(valores)}")
-        if "papel" in campos:
-            valores.append(campos["papel"])
-            atribuicoes.append(f"papel = ${len(valores)}")
+        for coluna in self._CAMPOS_EDITAVEIS:
+            if coluna in campos:
+                valores.append(campos[coluna])
+                atribuicoes.append(f"{coluna} = ${len(valores)}")
         if not atribuicoes:
             async with self.pool.acquire() as conn:
                 return await conn.fetchrow(
@@ -510,6 +506,73 @@ class Database:
         async with self.pool.acquire() as conn:
             resultado = await conn.execute("DELETE FROM usuarios WHERE id = $1", usuario_id)
         return resultado.endswith("1")
+
+    # ------------------------------------------------------------- sessão JWT
+
+    async def revogar_token(self, jti: str, expira_em) -> None:
+        """Denylist de logout (SEC-004). Limpa os já expirados de passagem."""
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            await conn.execute("DELETE FROM tokens_revogados WHERE expira_em < NOW()")
+            await conn.execute(
+                """
+                INSERT INTO tokens_revogados (jti, expira_em)
+                VALUES ($1, $2)
+                ON CONFLICT (jti) DO NOTHING
+                """,
+                jti,
+                expira_em,
+            )
+
+    async def token_revogado(self, jti: str) -> bool:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            return bool(
+                await conn.fetchval("SELECT COUNT(*) FROM tokens_revogados WHERE jti = $1", jti)
+            )
+
+    # --------------------------------------------------------------- auditoria
+
+    async def registrar_auditoria(
+        self,
+        acao: str,
+        ator_id: int | None = None,
+        alvo_id: int | None = None,
+        alvo_email: str | None = None,
+        valores: dict | None = None,
+        ip: str | None = None,
+    ) -> None:
+        """Trilha de mudanças de permissão (AUD-001). Nunca derruba a rota."""
+        assert self.pool is not None
+        import json
+
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO auditoria (ator_id, acao, alvo_id, alvo_email, valores, ip)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                """,
+                ator_id,
+                acao,
+                alvo_id,
+                alvo_email,
+                json.dumps(valores) if valores is not None else None,
+                ip,
+            )
+
+    async def listar_usuarios_paginado(self, limit: int, offset: int) -> list[asyncpg.Record]:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(
+                """
+                SELECT id, email, papel, telegram_user_id, pode_usar_bot
+                FROM usuarios
+                ORDER BY id
+                LIMIT $1 OFFSET $2
+                """,
+                limit,
+                offset,
+            )
 
 
 db = Database()

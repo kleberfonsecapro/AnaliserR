@@ -27,7 +27,10 @@ import database as database_module  # noqa: E402
 
 @pytest.fixture
 async def db():
-    """Banco real e limpo: esquema do init.sql + migrações, usuários vazios."""
+    """Banco real e limpo: esquema do init.sql + migrações, usuários vazios.
+
+    Troca o singleton `database.db` (usado pela API/bot) pelo banco de testes.
+    """
     os.environ["DATABASE_URL"] = DATABASE_URL
     try:
         conn = await asyncpg.connect(DATABASE_URL)
@@ -43,5 +46,15 @@ async def db():
     await database.connect()
     async with database.pool.acquire() as conn:
         await conn.execute("TRUNCATE usuarios RESTART IDENTITY CASCADE")
+        await conn.execute("TRUNCATE auditoria RESTART IDENTITY CASCADE")
+        await conn.execute("TRUNCATE tokens_revogados")
+
+    anterior = database_module.db
+    database_module.db = database
+    import api as api_module
+
+    api_module.db = database
     yield database
+    api_module.db = anterior
+    database_module.db = anterior
     await database.close()

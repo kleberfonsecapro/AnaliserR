@@ -2,10 +2,11 @@
 
 import logging
 import re
+from datetime import UTC, datetime
 
 import asyncpg
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
@@ -154,6 +155,9 @@ async def painel_atual(
         usuario_id = int(payload.get("sub", ""))
     except (TypeError, ValueError):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "sessão inválida ou expirada")
+    jti = payload.get("jti")
+    if jti and await db.token_revogado(jti):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "sessão encerrada")
     usuario = await db.buscar_usuario_por_id(usuario_id)
     if usuario is None or usuario["papel"] not in _ENTRA_NO_PAINEL:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "sem acesso ao painel")
@@ -194,16 +198,41 @@ def criar_rotas() -> APIRouter:
             "usuario_id": usuario["id"],
         }
 
+    @rotas.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+    async def logout(credenciais: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> None:
+        """Revoga o token atual (SEC-004). 204 sempre: repetir logout não é erro."""
+        if credenciais is None:
+            return
+        try:
+            payload = ler_token(credenciais.credentials)
+        except jwt.PyJWTError:
+            return
+        jti = payload.get("jti")
+        if jti:
+            await db.revogar_token(jti, datetime.fromtimestamp(payload["exp"], tz=UTC))
+
     @rotas.get("/users", response_model=list[UsuarioOut])
-    async def listar(_ator: asyncpg.Record = Depends(painel_atual)) -> list[UsuarioOut]:
-        return [_usuario(row) for row in await db.listar_usuarios()]
+    async def listar(
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+        _ator: asyncpg.Record = Depends(painel_atual),
+    ) -> list[UsuarioOut]:
+        return [_usuario(row) for row in await db.listar_usuarios(limit=limit, offset=offset)]
 
     @rotas.post("/users", response_model=UsuarioOut, status_code=status.HTTP_201_CREATED)
     async def criar(
         corpo: UsuarioIn,
+        request: Request,
         ator: asyncpg.Record = Depends(painel_atual),
     ) -> UsuarioOut:
         if not _pode_atribuir(ator["papel"], corpo.papel):
+            await _auditar(
+                "permissao_negada",
+                ator,
+                alvo_email=corpo.email,
+                valores={"papel": corpo.papel},
+                ip=_ip_do_cliente(request),
+            )
             raise HTTPException(status.HTTP_403_FORBIDDEN, "gestor só cadastra usuários")
         try:
             row = await db.criar_usuario(
@@ -216,6 +245,14 @@ def criar_rotas() -> APIRouter:
         except asyncpg.UniqueViolationError:
             raise HTTPException(status.HTTP_409_CONFLICT, "e-mail ou ID do Telegram já cadastrado")
         logger.info("usuário %s cadastrado com nível %s", row["id"], row["papel"])
+        await _auditar(
+            "criar_usuario",
+            ator,
+            alvo_id=row["id"],
+            alvo_email=row["email"],
+            valores={"papel": row["papel"], "pode_usar_bot": row["pode_usar_bot"]},
+            ip=_ip_do_cliente(request),
+        )
         await _cumprimentar(row)
         return _usuario(row)
 
@@ -223,12 +260,14 @@ def criar_rotas() -> APIRouter:
     async def atualizar(
         usuario_id: int,
         corpo: UsuarioPatch,
+        request: Request,
         ator: asyncpg.Record = Depends(painel_atual),
     ) -> UsuarioOut:
         alvo = await db.buscar_usuario_por_id(usuario_id)
         if alvo is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "usuário não encontrado")
         if not _pode_gerenciar(ator, alvo):
+            await _auditar("permissao_negada", ator, alvo, campos=None, ip=_ip_do_cliente(request))
             raise HTTPException(status.HTTP_403_FORBIDDEN, "sem permissão para gerenciar este usuário")
         campos = corpo.model_dump(exclude_unset=True)
         if "papel" in campos and campos["papel"] != alvo["papel"]:
@@ -244,6 +283,7 @@ def criar_rotas() -> APIRouter:
             raise HTTPException(status.HTTP_409_CONFLICT, "ID do Telegram já cadastrado")
         if row is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "usuário não encontrado")
+        await _auditar("atualizar_usuario", ator, alvo, campos, ip=_ip_do_cliente(request))
         if (
             campos.get("telegram_user_id") is not None
             and campos["telegram_user_id"] != alvo["telegram_user_id"]
@@ -252,16 +292,46 @@ def criar_rotas() -> APIRouter:
         return _usuario(row)
 
     @rotas.delete("/users/{usuario_id}", status_code=status.HTTP_204_NO_CONTENT)
-    async def excluir(usuario_id: int, ator: asyncpg.Record = Depends(painel_atual)) -> None:
+    async def excluir(
+        usuario_id: int,
+        request: Request,
+        ator: asyncpg.Record = Depends(painel_atual),
+    ) -> None:
         alvo = await db.buscar_usuario_por_id(usuario_id)
         if alvo is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "usuário não encontrado")
         if ator["id"] == alvo["id"]:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "não é possível remover o próprio usuário")
         if not _pode_gerenciar(ator, alvo):
+            await _auditar("permissao_negada", ator, alvo, campos={"acao": "excluir"}, ip=_ip_do_cliente(request))
             raise HTTPException(status.HTTP_403_FORBIDDEN, "sem permissão para gerenciar este usuário")
         if alvo["papel"] == "admin" and await db.contar_admins() <= 1:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "mantenha ao menos um administrador")
         await db.excluir_usuario(usuario_id)
+        await _auditar("excluir_usuario", ator, alvo, campos=None, ip=_ip_do_cliente(request))
 
     return rotas
+
+
+async def _auditar(
+    acao: str,
+    ator: asyncpg.Record,
+    alvo: asyncpg.Record | None = None,
+    alvo_id: int | None = None,
+    alvo_email: str | None = None,
+    campos: dict | None = None,
+    valores: dict | None = None,
+    ip: str | None = None,
+) -> None:
+    """Falha de auditoria nunca derruba a operação; o log de erro cobre isso."""
+    try:
+        await db.registrar_auditoria(
+            acao=acao,
+            ator_id=ator["id"],
+            alvo_id=(alvo["id"] if alvo else alvo_id),
+            alvo_email=(alvo["email"] if alvo else alvo_email),
+            valores=valores if valores is not None else campos,
+            ip=ip,
+        )
+    except Exception:
+        logger.exception("falha ao registrar auditoria de %s", acao)

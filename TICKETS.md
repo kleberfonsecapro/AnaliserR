@@ -54,46 +54,53 @@ Cada ticket é fino e end-to-end (tracer bullet): entra código + teste/validaç
 - **Bloqueado por:** — (decisão de infra necessária antes da execução)
 - **Desbloqueia:** —
 
-## Onda 2 — P1 (segurança e operação)
+## Onda 2 — P1 (segurança e operação) — ✅ concluída em 2026-10-09
 
 ### TP-07 · OPS-002 — Remover DDL destrutivo do boot
 - **Prioridade:** P1 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — migração 0004; boot sem DDL destrutivo.
 - **Escopo:** converter `_garantir_niveis()` (database.py:93-114) em migração versionada idempotente; boot não executa mais `DROP CONSTRAINT`.
 - **Bloqueado por:** —
 - **Desbloqueia:** TP-08
 
 ### TP-08 · SEC-008 — SQL seguro com whitelist declarativa
 - **Prioridade:** P2 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — whitelist declarativa + teste.
 - **Escopo:** eliminar as f-strings SQL restantes (`atualizar_usuario`, DDL) com mapeamento declarativo de colunas permitidas + teste cobrindo o mapa.
 - **Bloqueado por:** TP-07 (mesma região de código), TP-01
 - **Desbloqueia:** —
 
 ### TP-09 · OPS-004 — Destino da `analises_mvp`
 - **Prioridade:** P1 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — tabela legada removida (0005); retenção via `RETENCAO_REUNIOES_DIAS`.
 - **Escopo:** remover a criação da tabela do `init.sql`, documentar o destino dos dados (já migrados para `reunioes`) e criar rotina de expurgo com prazo configurável.
 - **Bloqueado por:** TP-07 (versionamento de migrações)
 - **Desbloqueia:** —
 
 ### TP-10 · SEC-004 — Logout real e JWT revogável
 - **Prioridade:** P1 · **Esforço:** M
+- **Status: ✅ FEITO (2026-10-09)** — JWT com jti + denylist + logout; refresh desnecessário com sessão curta.
 - **Escopo:** `jti` + denylist ou refresh token rotativo com revogação de família; endpoint `POST /auth/logout` revogando; frontend chama o endpoint em "Sair".
 - **Bloqueado por:** TP-03, TP-01
 - **Desbloqueia:** TP-11
 
 ### TP-11 · FEAT-001 — Mensagem de sessão sem texto fixo
 - **Prioridade:** P1 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — mensagem usa expires_in real.
 - **Escopo:** frontend usa o `expires_in` real do backend na mensagem de expiração; alterar `JWT_EXPIRE_MINUTES` não gera texto incorreto.
 - **Bloqueado por:** TP-10 (a reformulação de sessão muda o contrato)
 - **Desbloqueia:** —
 
 ### TP-12 · FEAT-002 — Paginação em `GET /users`
 - **Prioridade:** P1 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — limit/offset com teto 200 + UI paginada.
 - **Escopo:** `limit`/`offset` com teto; UI paginada em `Admin.jsx`.
 - **Bloqueado por:** —
 - **Desbloqueia:** —
 
 ### TP-13 · AUD-001 — Auditoria de mudanças de permissão
 - **Prioridade:** P1 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — tabela auditoria + gravação nas mutações e negações.
 - **Escopo:** tabela `auditoria` (ator, ação, alvo, valores anterior/novo, IP, horário) gravada nas mutações de `api.py`; tentativas negadas também registradas.
 - **Bloqueado por:** TP-01
 - **Desbloqueia:** —

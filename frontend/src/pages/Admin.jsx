@@ -32,21 +32,25 @@ function podeGerenciar(papelAtor, alvo) {
 
 export default function Admin({ restante, papel, usuarioId, aoSair }) {
   const [usuarios, setUsuarios] = useState([]);
+  const [pagina, setPagina] = useState(0);
+  const [temMais, setTemMais] = useState(false);
   const [nivel, setNivel] = useState("usuario");
   const [erro, setErro] = useState("");
   const [aviso, setAviso] = useState("");
   const [enviando, setEnviando] = useState(false);
   const niveisDisponiveis = papel === "admin" ? NIVEIS : NIVEIS.filter((item) => item.id === "usuario");
   const descricao = NIVEIS.find((item) => item.id === nivel)?.texto || "";
+  const POR_PAGINA = 50;
 
-  async function carregar() {
-    const lista = await listarUsuarios();
+  async function carregar(paginaAlvo = pagina) {
+    const lista = await listarUsuarios(paginaAlvo, POR_PAGINA);
     setUsuarios(lista);
+    setTemMais(lista.length === POR_PAGINA);
   }
 
   useEffect(() => {
-    carregar().catch((exc) => setErro(exc.message));
-  }, []);
+    carregar(pagina).catch((exc) => setErro(exc.message));
+  }, [pagina]);
 
   async function cadastrar(event) {
     event.preventDefault();
@@ -232,6 +236,26 @@ export default function Admin({ restante, papel, usuarioId, aoSair }) {
           );
         })}
       </section>
+
+      <nav className="paginacao" aria-label="Paginação de usuários">
+        <button
+          type="button"
+          className="secundario"
+          disabled={pagina === 0}
+          onClick={() => setPagina((atual) => Math.max(0, atual - 1))}
+        >
+          Anterior
+        </button>
+        <span>Página {pagina + 1}</span>
+        <button
+          type="button"
+          className="secundario"
+          disabled={!temMais}
+          onClick={() => setPagina((atual) => atual + 1)}
+        >
+          Próxima
+        </button>
+      </nav>
     </main>
   );
 }

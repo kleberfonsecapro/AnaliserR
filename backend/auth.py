@@ -1,6 +1,7 @@
 """Senha com bcrypt e JWT de sessão curta."""
 
 import os
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
@@ -35,7 +36,7 @@ def minutos_expiracao() -> int:
 
 def criar_token(usuario_id: int, papel: str) -> str:
     expira_em = datetime.now(UTC) + timedelta(minutes=minutos_expiracao())
-    payload = {"sub": str(usuario_id), "papel": papel, "exp": expira_em}
+    payload = {"sub": str(usuario_id), "papel": papel, "exp": expira_em, "jti": uuid.uuid4().hex}
     return jwt.encode(payload, os.environ["JWT_SECRET"], algorithm=_ALGORITMO)
 
 

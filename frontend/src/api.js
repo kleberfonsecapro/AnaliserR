@@ -12,6 +12,13 @@ export function definirSessao(accessToken, expiresIn, quandoExpirar) {
 }
 
 export function encerrarSessao() {
+  if (token) {
+    // Best-effort: revoga o token antes de limpar a sessão local (SEC-004).
+    fetch("/api/auth/logout", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    }).catch(() => {});
+  }
   token = null;
   clearTimeout(timer);
   aoExpirar();
@@ -55,8 +62,8 @@ export function entrar(email, password) {
   });
 }
 
-export function listarUsuarios() {
-  return pedir("/users");
+export function listarUsuarios(pagina = 0, limite = 50) {
+  return pedir(`/users?limit=${limite}&offset=${pagina * limite}`);
 }
 
 export function criarUsuario(dados) {

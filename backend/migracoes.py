@@ -20,6 +20,10 @@ logger = logging.getLogger("analiser.migracoes")
 MIGRACAO_0001_CLIENTES = "0001_clientes_e_reunioes"
 MIGRACAO_0002_NOME_UNICO = "0002_nome_cliente_unico"
 MIGRACAO_0003_SITUACAO = "0003_situacao_reuniao"
+MIGRACAO_0004_CONSTRAINT_PAPEL = "0004_constraint_papel_usuarios"
+MIGRACAO_0005_FIM_ANALISES_MVP = "0005_fim_analises_mvp"
+MIGRACAO_0006_TOKENS_REVOGADOS = "0006_tokens_revogados"
+MIGRACAO_0007_AUDITORIA = "0007_auditoria"
 
 
 async def aplicar(pool: asyncpg.Pool) -> None:
@@ -62,6 +66,21 @@ async def aplicar(pool: asyncpg.Pool) -> None:
                 MIGRACAO_0003_SITUACAO,
             )
             logger.info("migração %s aplicada", MIGRACAO_0003_SITUACAO)
+
+        novas = [
+            (MIGRACAO_0004_CONSTRAINT_PAPEL, _garantir_constraint_papel),
+            (MIGRACAO_0005_FIM_ANALISES_MVP, _remover_analises_mvp),
+            (MIGRACAO_0006_TOKENS_REVOGADOS, _criar_tokens_revogados),
+            (MIGRACAO_0007_AUDITORIA, _criar_auditoria),
+        ]
+        for nome, passo in novas:
+            if nome not in aplicadas:
+                await passo(conn)
+                await conn.execute(
+                    "INSERT INTO migracoes_aplicadas (nome) VALUES ($1) ON CONFLICT DO NOTHING",
+                    nome,
+                )
+                logger.info("migração %s aplicada", nome)
 
         await _garantir_indices_reunioes(conn)
 
@@ -267,5 +286,64 @@ async def _garantir_indices_reunioes(conn: asyncpg.Connection) -> None:
         """
         CREATE INDEX IF NOT EXISTS clientes_nome_prefixo_idx
             ON clientes (nome_normalizado text_pattern_ops)
+        """
+    )
+
+
+async def _garantir_constraint_papel(conn: asyncpg.Connection) -> None:
+    """0004 — o antigo `_garantir_niveis()` rodava este DDL a CADA boot
+    (OPS-002). Agora roda uma única vez, registrada como migração.
+    """
+    await conn.execute("ALTER TABLE usuarios DROP CONSTRAINT IF EXISTS usuarios_papel_check")
+    await conn.execute("UPDATE usuarios SET papel = 'usuario' WHERE papel = 'user'")
+    await conn.execute(
+        """
+        ALTER TABLE usuarios
+            ADD CONSTRAINT usuarios_papel_check
+            CHECK (papel IN ('admin', 'gestor', 'usuario'))
+        """
+    )
+
+
+async def _remover_analises_mvp(conn: asyncpg.Connection) -> None:
+    """0005 — a tabela analises_mvp era morta e com dado sensível (OPS-004).
+    Os dados já foram migrados para `reunioes` pela 0001; aqui ela some."""
+    await conn.execute("DROP TABLE IF EXISTS analises_mvp")
+    logger.info("tabela analises_mvp removida; histórico já migrado para reunioes")
+
+
+async def _criar_tokens_revogados(conn: asyncpg.Connection) -> None:
+    """0006 — denylist de JWT para o logout (SEC-004)."""
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tokens_revogados (
+            jti        TEXT PRIMARY KEY,
+            expira_em  TIMESTAMPTZ NOT NULL,
+            revogado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+
+
+async def _criar_auditoria(conn: asyncpg.Connection) -> None:
+    """0007 — trilha de auditoria de mudanças de permissão (AUD-001)."""
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS auditoria (
+            id         SERIAL PRIMARY KEY,
+            ator_id    INTEGER,
+            acao       TEXT NOT NULL,
+            alvo_id    INTEGER,
+            alvo_email TEXT,
+            valores    JSONB,
+            ip         TEXT,
+            criado_em  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    await conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS auditoria_criado_em_idx
+            ON auditoria (criado_em)
         """
     )
