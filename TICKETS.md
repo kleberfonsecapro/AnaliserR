@@ -8,22 +8,25 @@ Cada ticket é fino e end-to-end (tracer bullet): entra código + teste/validaç
 
 ---
 
-## Onda 0 — Fundação (sem bloqueios)
+## Onda 0 — Fundação (sem bloqueios) — ✅ concluída em 2026-10-09
 
 ### TP-01 · OPS-006 — Base de testes, lint e CI
 - **Prioridade:** P2 · **Esforço:** M
+- **Status: ✅ FEITO (2026-10-09)** — `backend/tests/` (pytest+asyncpg, 10 testes passando, incl. aceite 4 do BUG-001), ruff com baseline no `pyproject.toml`, CI em `.github/workflows/ci.yml`.
 - **Escopo:** criar `backend/tests/` (pytest + pytest-asyncio), ruff configurado, workflow GitHub Actions rodando lint + testes; teste mínimo cobrindo `garantir_admin` (fecha o aceite pendente do BUG-001).
 - **Bloqueado por:** —
 - **Desbloqueia:** TP-04, TP-05 e todo ticket cujo aceite exige teste automatizado.
 
 ### TP-02 · OPS-007 — Auditoria de segredos no git
 - **Prioridade:** P1 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — `git log --all -- .env` vazio e `git ls-files` lista só `.env.example`: nenhum segredo commitado neste repo (criado já com `.gitignore`). Rotação de credenciais **não necessária**.
 - **Escopo:** `git log -- .env` no histórico; se houver segredo commitado, rotacionar as credenciais (Telegram, Groq, Postgres, JWT) e registrar. Documentar no README.
 - **Bloqueado por:** —
 - **Desbloqueia:** —
 
 ### TP-03 · OPS-005 — Migrar de passlib para bcrypt direto
 - **Prioridade:** P2 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — `auth.py` usa `bcrypt` nativo (truncamento de 72 bytes explícito mantém hashes antigos válidos), `passlib` removido do `requirements.txt`, backend recriado em produção.
 - **Escopo:** trocar `passlib` arquivado por `bcrypt` nativo em `auth.py`; despin `bcrypt==4.0.1`; validar login e hash antigo.
 - **Bloqueado por:** —
 - **Desbloqueia:** TP-06 (reformulação da autenticação em cima da base nova).

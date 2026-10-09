@@ -10,7 +10,6 @@ from datetime import timedelta
 from pathlib import Path
 
 import asyncpg
-
 from fastapi import FastAPI
 from groq import AsyncGroq
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
@@ -19,24 +18,25 @@ from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
-    ConversationHandler,
     ContextTypes,
+    ConversationHandler,
     MessageHandler,
     filters,
 )
 
+import referencia as referencia_mod
 from api import criar_rotas
 from auth import hash_senha
-from database import db
-from database import normalizar_pesquisa
+from database import db, normalizar_pesquisa
 from mensagens import (
     ANALISE_ABERTA,
     AUDIO_SEM_CLIENTE,
+    CANCELADO,
     CLIENTE_PRONTO_AUDIO,
     CLIENTE_SALVO,
-    ESCOLHA_DA_ANALISE,
     CONFIRMAR_CLIENTE,
     CONFIRMAR_CLIENTE_DESCONHECIDO,
+    ESCOLHA_DA_ANALISE,
     MENU_CLIENTE_DETALHE,
     MENU_CLIENTE_ENTRADA,
     MENU_CLIENTE_NAO_ENCONTRADO,
@@ -47,7 +47,6 @@ from mensagens import (
     NOVO_CLIENTE_NOME,
     OPCOES_CLIENTE,
     SEM_REUNIAO,
-    CANCELADO,
     Acesso,
     classificar_acesso,
     eh_saudacao,
@@ -63,9 +62,8 @@ from mensagens import (
     resumir_clientes,
     termo_de_busca,
 )
-from pdf_relatorio import formatar_data, gerar_pdf
 from notificacoes import descrever_bot, registrar_bot
-import referencia as referencia_mod
+from pdf_relatorio import formatar_data, gerar_pdf
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",

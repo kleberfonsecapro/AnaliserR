@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: analiser
+          POSTGRES_PASSWORD: analiser
+          POSTGRES_DB: analiser_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U analiser -d analiser_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Dependências
+        run: pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check backend
+
+      - name: Testes (pytest)
+        env:
+          DATABASE_URL: postgresql://analiser:analiser@localhost:5432/analiser_test
+          JWT_SECRET: segredo-de-ci
+        run: python -m pytest backend/tests -v

@@ -1,7 +1,7 @@
 """PDF do relatório e do roadmap de uma reunião já salva."""
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from fpdf import FPDF
@@ -39,7 +39,7 @@ def _linha_de_tabela(linha: str) -> bool:
 
 def formatar_data(quando: datetime) -> str:
     if quando.tzinfo is None:
-        quando = quando.replace(tzinfo=timezone.utc)
+        quando = quando.replace(tzinfo=UTC)
     return quando.astimezone(_CUIABA).strftime("%d/%m/%Y %H:%M")
 
 
