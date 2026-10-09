@@ -521,7 +521,7 @@ Logs em `INFO` com `basicConfig` e formato simples, sem request id, sem métrica
 
 ### DEV-001 · Diretório com typo no nome
 
-- **Status (🔴 ABERTO — auditoria 2026-10-09):** Diretório ainda bot_analiseR.
+- **Status (✅ RESOLVIDO — onda 4, 2026-10-09):** diretório renomeado para `analiser`; containers e rede recriados como `analiser-*`; o volume `bot_analiser_pgdata` (dados) foi preservado como externo.
 
 - **Arquivo:** `bot_analiseR/`
 - **Severidade:** P3 · **Esforço:** S

@@ -117,6 +117,9 @@ services:
     <<: *limites
 
 volumes:
+  # DEV-001: o volume guarda os dados do projeto antigo (bot_analiseR).
   pgdata:
+    name: bot_analiser_pgdata
+    external: true
   caddy_data:
   caddy_config:

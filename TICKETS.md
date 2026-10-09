@@ -142,7 +142,7 @@ Cada ticket é fino e end-to-end (tracer bullet): entra código + teste/validaç
 - **Bloqueado por:** —
 - **Desbloqueia:** —
 
-## Onda 4 — P2 (qualidade e DX) — ✅ concluída em 2026-10-09 (exceto TP-24, aguardando janela de manutenção)
+## Onda 4 — P2 (qualidade e DX) — ✅ concluída em 2026-10-09 (incluindo TP-24)
 
 ### TP-19 · OPS-001 — Separar bot do processo da API
 - **Prioridade:** P1 · **Esforço:** L
@@ -181,6 +181,7 @@ Cada ticket é fino e end-to-end (tracer bullet): entra código + teste/validaç
 
 ### TP-24 · DEV-001 — Renomear diretório `bot_analiseR`
 - **Prioridade:** P3 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — diretório `analiser`; volume de dados preservado (external `bot_analiser_pgdata`)
 - **Escopo:** renomear para `analiser`, ajustar nomes de containers/compose e referências no README.
 - **Bloqueado por:** todos os anteriores (evita conflito com trabalho em andamento)
 - **Desbloqueia:** —
