@@ -20,7 +20,7 @@ A entrevista com o cliente deixa de ser anotada no papel. O áudio vira um docum
 - problema, usuários e escopo da versão 1;
 - o que fica fora da primeira versão;
 - stack sugerida, ancorada em [`padrao_stack/STACK_PADRAO.md`](padrao_stack/STACK_PADRAO.md);
-- roadmap e critérios de aceite;
+- roadmap passo a passo separado em backend e frontend, e critérios de aceite;
 - planos de ação, cada um dizendo o que construir, quando está pronto e de qual outro depende.
 
 Se o áudio não decide algo que muda a tecnologia (plataforma, dados, integração ou quem usa), a reunião fica **aberta**: o bot faz até duas perguntas, cada uma com duas opções, e guarda um relatório parcial. Os planos de ação só entram quando a análise fecha. O desenvolvedor pode fechar mesmo assim; o que continuar sem resposta fica em "Pontos em aberto" e não vira ticket.
@@ -43,7 +43,7 @@ O produto em si e a stack que ele sugere para o sistema do cliente são coisas d
 | Sessão do painel | JWT, 5 minutos |
 | Execução | Docker Compose, `restart: unless-stopped` |
 
-A referência injetada em toda análise está em [`padrao_stack/`](padrao_stack/): Bun, TypeScript, TanStack Start, Tailwind, Hono, PostgreSQL com Drizzle, Better Auth, Vitest e Playwright, mais o contrato de engenharia. O modelo usa essa base quando ela serve ao pedido e diz, na seção "Stack sugerida", o que foi trocado e por quê.
+A referência injetada em toda análise está em [`padrao_stack/`](padrao_stack/): Bun, TypeScript, TanStack Start, Tailwind, Hono, PostgreSQL com Drizzle, Better Auth, Vitest e Playwright, mais o contrato de engenharia. Da stack é derivado um índice por camada que guia a escolha de tecnologia do roadmap: o roadmap fechado sai sempre em `### Backend` e `### Frontend`, e cada etapa cita uma tecnologia da lista da própria camada. O modelo usa essa base quando ela serve ao pedido e diz, na seção "Stack sugerida", o que foi trocado e por quê; se ele não separar as camadas, uma passada de correção reescreve só a seção do roadmap.
 
 ## Como usar
 

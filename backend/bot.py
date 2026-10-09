@@ -81,11 +81,14 @@ ESCOLHER_CLIENTE, CLIENTE_NOVA_REUNIAO, CONFIRMAR_NUMERO = 0, 1, 2
 AGUARDAR_AUDIO, ESCOLHER_CLIENTE_DO_AUDIO, PEDIR_NOME = 3, 4, 5
 AGUARDAR_RESPOSTA = 6
 
-_REGRAS_STACK = """Regras da stack:
+_REGRAS_STACK = """Regras da stack e do roadmap:
 - A stack padrão da organização é a primeira opção. Use-a sempre que servir ao pedido, sem listar dezenas de alternativas.
+- Antes de sugerir qualquer tecnologia, procure-a na stack padrão: consulte a lista da camada indicada pelo guia de camadas (Frontend, Backend ou Comum). Só saia dessa lista quando nenhuma linha dela servir ao pedido.
 - Se alguma tecnologia da stack padrão não servir ao pedido do cliente (aplicativo mobile nativo, IoT, machine learning, jogo, sistema embarcado), use o que servir e diga qual tecnologia foi descartada e por quê, em uma ou duas frases. Sem justificativa, use a stack padrão.
 - O contrato de engenharia recebido é condição de entrega, não preferência.
-- Não invente requisito que não esteja na transcrição nem nas respostas do desenvolvedor."""
+- Não invente requisito que não esteja na transcrição nem nas respostas do desenvolvedor.
+- O Roadmap passo a passo sai sempre em duas subseções, nesta ordem: ### Backend e ### Frontend. Cada etapa cita as tecnologias da stack padrão que serão usadas; etapa do Frontend que depende de algum serviço aponta a etapa do Backend da qual depende.
+- O que uma camada precisar e não estiver na stack padrão não vira tecnologia inventada: vira item de Pontos em aberto ou troca declarada no topo de Stack sugerida."""
 
 _SECOES_FECHADAS = """# MVP
 ## Problema
@@ -94,6 +97,8 @@ _SECOES_FECHADAS = """# MVP
 ## Fora da versão 1
 ## Stack sugerida
 ## Roadmap passo a passo
+### Backend
+### Frontend
 ## Critérios de aceite
 ## Planos de ação
 ## Pontos em aberto"""
@@ -338,6 +343,124 @@ def _sem_planos_de_acao(texto: str) -> str:
     return "\n".join(saida).strip()
 
 
+_SECAO_ROADMAP = re.compile(r"^##\s+Roadmap passo a passo\s*$", re.IGNORECASE)
+_SECAO_CRITERIOS = re.compile(r"^##\s+Critérios de aceite\s*$", re.IGNORECASE)
+_SECAO_NIVEL2 = re.compile(r"^##\s+")
+_SUBSECAO_ROADMAP = re.compile(r"^###\s+(backend|frontend)\s*$", re.IGNORECASE)
+
+
+def _limites_roadmap(linhas: list[str]) -> tuple[int | None, int]:
+    """Índices [inicio, fim) da seção do roadmap; fim exclusivo."""
+    inicio = next(
+        (i for i, linha in enumerate(linhas) if _SECAO_ROADMAP.match(linha.strip())),
+        None,
+    )
+    if inicio is None:
+        return None, len(linhas)
+    fim = next(
+        (
+            i
+            for i in range(inicio + 1, len(linhas))
+            if _SECAO_NIVEL2.match(linhas[i].strip())
+        ),
+        len(linhas),
+    )
+    return inicio, fim
+
+
+def _roadmap_esta_separado(relatorio: str) -> bool:
+    """O roadmap tem as duas subseções, Backend e Frontend, na ordem pedida."""
+    linhas = relatorio.splitlines()
+    inicio, fim = _limites_roadmap(linhas)
+    if inicio is None:
+        return False
+    subsecoes = [_SUBSECAO_ROADMAP.match(l.strip()) for l in linhas[inicio:fim]]
+    subsecoes = [m for m in subsecoes if m]
+    return [m.group(1).lower() for m in subsecoes][:2] == ["backend", "frontend"]
+
+
+def _limpar_roadmap_reescrito(resposta: str) -> str | None:
+    """Valida a resposta de correção: uma única seção, começando pelo roadmap."""
+    linhas = resposta.strip().splitlines()
+    if linhas and linhas[0].strip().startswith("```"):
+        linhas = linhas[1:]
+        if linhas and linhas[-1].strip().startswith("```"):
+            linhas = linhas[:-1]
+    texto = "\n".join(linhas).strip()
+    if not texto or not _SECAO_ROADMAP.match(texto.splitlines()[0].strip()):
+        return None
+    if any(_SECAO_NIVEL2.match(l.strip()) for l in texto.splitlines()[1:]):
+        return None  # outra seção veio junto; descarta a correção
+    return texto
+
+
+def _substituir_roadmap(relatorio: str, novo_bloco: str) -> str:
+    linhas = relatorio.splitlines()
+    inicio, fim = _limites_roadmap(linhas)
+    bloco = novo_bloco.strip().splitlines()
+    if inicio is None:
+        destino = next(
+            (i for i, l in enumerate(linhas) if _SECAO_CRITERIOS.match(l.strip())),
+            len(linhas),
+        )
+        linhas[destino:destino] = ["", "", *bloco, ""]
+        return "\n".join(linhas).rstrip()
+    linhas[inicio:fim] = bloco + ([""] if fim < len(linhas) else [])
+    return "\n".join(linhas).rstrip()
+
+
+_REPARA_ROADMAP = """Você recebe um relatório do AnaliseR em markdown.
+Reescreva apenas a seção '## Roadmap passo a passo' deste relatório.
+
+A seção reescrita tem exatamente duas subseções, nesta ordem:
+### Backend
+### Frontend
+
+Regras:
+- Mantenha o texto das etapas existentes e a numeração quando der; coloque cada etapa na subseção certa.
+- Cada etapa cita a tecnologia da stack padrão da camada, consultando o guia de camadas. Etapa sem tecnologia na stack padrão não vira tecnologia inventada: vira item de 'Pontos em aberto', fora da seção.
+- Não altere nenhuma outra seção do relatório. Dentro da seção, além do cabeçalho, não escreva '##'.
+
+Responda apenas com a seção reescrita, começando exatamente por '## Roadmap passo a passo'."""
+
+
+async def _separar_roadmap(relatorio: str) -> str | None:
+    """Uma chamada só para reescrever o roadmap, quando ele não saiu separado."""
+    assert _groq is not None
+    resposta = await _groq.chat.completions.create(
+        model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
+        temperature=0.2,
+        max_tokens=4000,
+        messages=[
+            *referencia_mod.mensagens_de_referencia(),
+            {"role": "system", "content": _REPARA_ROADMAP},
+            {"role": "user", "content": relatorio},
+        ],
+    )
+    conteudo = (resposta.choices[0].message.content or "").strip()
+    return _limpar_roadmap_reescrito(conteudo)
+
+
+async def _garantir_roadmap(relatorio: str) -> str:
+    """Roadmap fechado sempre em ### Backend e ### Frontend.
+
+    O prompt já pede a separação; esta passada corrige o relatório quando o
+    modelo não atende, e nunca piora: em qualquer dúvida, devolve o original.
+    """
+    if _roadmap_esta_separado(relatorio):
+        return relatorio
+    logger.info("roadmap sem Backend/Frontend; tentando separar por camada")
+    try:
+        reescrito = await _separar_roadmap(relatorio)
+    except Exception:
+        logger.exception("falha ao separar o roadmap; mantendo o relatório original")
+        return relatorio
+    if not reescrito:
+        logger.warning("resposta de correção do roadmap inválida; mantendo o original")
+        return relatorio
+    return _substituir_roadmap(relatorio, reescrito)
+
+
 def extrair_perguntas(relatorio: str) -> list[dict]:
     """Perguntas do relatório parcial, cada uma com até duas opções."""
     dentro = False
@@ -398,7 +521,12 @@ async def analisar(transcricao: str, fechar: bool = False) -> tuple[str, str]:
     conteudo = resposta.choices[0].message.content
     if not conteudo or not conteudo.strip():
         raise RuntimeError("a Groq devolveu um relatório vazio")
-    return interpretar_relatorio(conteudo, fechar)
+    texto, situacao = interpretar_relatorio(conteudo, fechar)
+    if situacao == "fechada":
+        # O roadmap fechado sai sempre separado em backend e frontend, e cada
+        # etapa cita as tecnologias da stack padrão da organização.
+        texto = await _garantir_roadmap(texto)
+    return texto, situacao
 
 
 CONVERSA_PROMPT = """Você é o AnaliseR no Telegram, falando com o desenvolvedor.
@@ -508,8 +636,24 @@ async def responder(update: Update, texto: str, teclado: InlineKeyboardMarkup | 
         await alvo.reply_text(texto, **extras)
 
 
+_TITULO_PREVIA = re.compile(r"^(#{1,3})\s+(.+)$")
+
+
+def _previa(texto: str) -> str:
+    """Títulos viram negrito na prévia: o Markdown do Telegram não renderiza '#'."""
+    saida: list[str] = []
+    for linha in texto.splitlines():
+        titulo = _TITULO_PREVIA.match(linha)
+        if not titulo:
+            saida.append(linha)
+            continue
+        rotulo = re.sub(r"([_*`\[])", r"\\\1", titulo.group(2))
+        saida.append(f"*{rotulo}*" if len(titulo.group(1)) <= 2 else f"_{rotulo}_")
+    return "\n".join(saida)
+
+
 async def enviar_relatorio(update: Update, relatorio: str) -> None:
-    for parte in fatiar_texto(relatorio):
+    for parte in fatiar_texto(_previa(relatorio)):
         await responder(update, parte)
 
 

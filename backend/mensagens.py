@@ -50,7 +50,7 @@ Você manda o áudio de uma conversa com o cliente e eu devolvo o escopo de um M
 1. Transcrevo o áudio automaticamente.
 2. Reduzo o escopo ao mínimo viável da primeira versão.
 3. Listo o que fica *fora* da versão 1, para o projeto não inflar.
-4. Sugiro a stack, um roadmap passo a passo e os critérios de aceite.
+4. Sugiro a stack, um roadmap passo a passo separado em backend e frontend, e os critérios de aceite.
 5. Registro o que ficou em aberto na conversa."""
 
 _COMO_USAR = """*Como usar*
@@ -208,7 +208,7 @@ Peça ao administrador para ativar "Pode usar o bot" no painel."""
 DESCRICAO_BOT = (
     "O AnaliseR organiza as reuniões por cliente. "
     "Escolha o cliente pelo nome ou pelo código no menu, depois envie o áudio. "
-    "O relatório traz o escopo da versão 1, a stack, o roadmap e os critérios de aceite. "
+    "O relatório traz o escopo da versão 1, a stack, o roadmap separado em backend e frontend e os critérios de aceite. "
     "O uso exige autorização do administrador."
 )
 

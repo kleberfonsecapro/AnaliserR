@@ -1,10 +1,12 @@
 """Contexto da organização injetado na geração do relatório.
 
 A pasta `padrao_stack/` é a referência que a IA usa para decidir a stack
-sugerida e o roadmap de cada cliente. Este módulo lê esses documentos uma
-única vez, no boot, e falha alto se eles não estiverem disponíveis: degradar
-em silêncio para "sugerir qualquer stack" é o pior modo de falha possível,
-porque ninguém percebe.
+sugerida e o roadmap de cada cliente. O roadmap sair separado em backend e
+frontend, e cada camada é indexada por um guia derivado deste arquivo — é esse
+índice que diz onde a IA deve procurar a tecnologia de cada etapa. Este módulo
+lê esses documentos uma única vez, no boot, e falha alto se eles não estiverem
+disponíveis: degradar em silêncio para "sugerir qualquer stack" é o pior modo
+de falha possível, porque ninguém percebe.
 """
 
 from __future__ import annotations
@@ -37,6 +39,22 @@ _CANDIDATOS = (
 
 _HEADING = re.compile(r"^##\s+(\d+)\.\s*(.+?)\s*$", re.MULTILINE)
 _HEADING_QUALQUER = re.compile(r"^##\s+", re.MULTILINE)
+
+# Uma linha da stack padrão, no formato "Categoria: tecnologias" — vindo de
+# "* Frontend: TanStack Start (React 19) + Vite" ou de "- **Banco de dados**: ...".
+_CATEGORIA = re.compile(
+    r"^\s*(?:[-*+]\s+|\d+\.\s+)?(?:\*\*|__)?([^:*\n]{2,48}?)(?:\*\*|__)?\s*:\s+(\S.*)$"
+)
+
+# Camada do roadmap e os fragmentos de nome de categoria que a abastecem. A
+# ordem importa: a primeira casa leva a tecnologia. O que não casar com nada
+# entra em "Comum", porque linguagem, runtime e testes servem às duas camadas.
+CAMADAS = (
+    ("Frontend", ("front", "ui", "estilo", "css", "visual", "component", "interface")),
+    ("Backend", ("back", "api", "servidor", "server", "banco", "database", "dados",
+                 "orm", "auth", "autentic", "fila", "cache", "mensageria")),
+    ("Comum", ()),
+)
 
 
 class ReferenciaIndisponivel(RuntimeError):
@@ -90,6 +108,59 @@ def _extrair_secoes(texto: str) -> str:
     return "\n\n".join(blocos)
 
 
+def camadas(stack: str) -> dict[str, list[str]]:
+    """Indexa a stack padrão por camada do roadmap (Frontend, Backend, Comum).
+
+    É o índice que a IA percorre para achar a tecnologia de cada etapa sem
+    precisar reler o documento inteiro nem inventar fora do padrão.
+    """
+    achadas: dict[str, list[str]] = {nome: [] for nome, _ in CAMADAS}
+    for linha in stack.splitlines():
+        achou = _CATEGORIA.match(linha)
+        if not achou:
+            continue
+        categoria, tecnologias = achou.group(1).strip(), achou.group(2).strip()
+        normalizada = categoria.lower()
+        alvo = next(
+            (nome for nome, chaves in CAMADAS if any(chave in normalizada for chave in chaves)),
+            "Comum",
+        )
+        etiqueta = (
+            tecnologias
+            if normalizada == alvo.lower()
+            else f"{categoria}: {tecnologias}"
+        )
+        achadas[alvo].append(etiqueta)
+    return {nome: itens for nome, itens in achadas.items() if itens}
+
+
+def _guia_de_camadas(stack: str) -> str:
+    """Instrução que aponta, por camada, onde a IA deve procurar a tecnologia."""
+    por_camada = camadas(stack)
+    linhas = [
+        "Guia de escolha de tecnologia por camada, derivado da stack padrão acima.",
+        "O 'Roadmap passo a passo' sai em duas subseções — ### Backend e ### Frontend — "
+        "e cada etapa só pode usar tecnologia da lista da sua camada:",
+    ]
+    for nome, _ in CAMADAS:
+        itens = por_camada.get(nome)
+        if not itens:
+            continue
+        linhas.append(f"- {nome}: " + " · ".join(itens))
+    for nome, _ in CAMADAS:
+        if nome != "Comum" and not por_camada.get(nome):
+            linhas.append(
+                f"- {nome}: a stack padrão não declara esta camada; não invente tecnologia "
+                "para ela, sinalize o caso em 'Pontos em aberto'."
+            )
+    linhas.append(
+        "Antes de sugerir qualquer tecnologia, procure-a nesta lista. Fora dela, só use "
+        "o que servir melhor quando nenhuma linha der conta do pedido, e declare a troca "
+        "no topo de 'Stack sugerida', com o motivo, em uma ou duas frases."
+    )
+    return "\n".join(linhas)
+
+
 def carregar() -> dict[str, str]:
     """Lê, extrai e memoriza a referência. Idempotente."""
     global _cache
@@ -103,14 +174,33 @@ def carregar() -> dict[str, str]:
 
     stack = stack_bruto.decode("utf-8").strip()
     contrato = _extrair_secoes(contrato_bruto.decode("utf-8"))
+    guia = _guia_de_camadas(stack)
 
     _cache = {
         "pasta": str(pasta),
         "stack": stack,
         "contrato": contrato,
+        "guia": guia,
         "hash_stack": _digest(stack_bruto),
         "hash_contrato": _digest(contrato_bruto),
     }
+
+    por_camada = camadas(stack)
+    for nome, _ in CAMADAS:
+        total = len(por_camada.get(nome, []))
+        if nome != "Comum" and not total:
+            logger.warning(
+                "stack padrão não declara a camada %s: o roadmap sairia sem tecnologia "
+                "de referência para ela",
+                nome,
+            )
+            continue
+        logger.info(
+            "stack padrão: camada %s com %d %s",
+            nome,
+            total,
+            "linha" if total == 1 else "linhas",
+        )
 
     logger.info(
         "referência carregada de %s | stack %s (%d bytes) | contrato %s (%d bytes)",
@@ -129,11 +219,12 @@ def carregar() -> dict[str, str]:
 def mensagens_de_referencia() -> list[dict[str, str]]:
     """Documentos da organização como contexto do LLM.
 
-    Duas mensagens de sistema separadas para o modelo distinguir o que se
-    constrói (stack) de como o time trabalha (contrato).
+    Três mensagens de sistema separadas para o modelo distinguir o que se
+    constrói (stack), como o time trabalha (contrato) e onde procurar a
+    tecnologia de cada camada do roadmap (guia de camadas).
     """
     ref = carregar()
-    return [
+    mensagens = [
         {
             "role": "system",
             "content": (
@@ -153,6 +244,9 @@ def mensagens_de_referencia() -> list[dict[str, str]]:
             ),
         },
     ]
+    if ref.get("guia"):
+        mensagens.append({"role": "system", "content": ref["guia"]})
+    return mensagens
 
 
 def hash_referencia() -> str:
