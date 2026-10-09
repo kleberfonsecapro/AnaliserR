@@ -19,10 +19,6 @@ const NIVEIS = [
   },
 ];
 
-function nomeNivel(id) {
-  return NIVEIS.find((nivel) => nivel.id === id)?.nome || id;
-}
-
 function podeGerenciar(papelAtor, alvo) {
   if (papelAtor === "admin") {
     return true;
@@ -30,7 +26,7 @@ function podeGerenciar(papelAtor, alvo) {
   return papelAtor === "gestor" && alvo.papel === "usuario";
 }
 
-export default function Admin({ restante, papel, usuarioId, aoSair }) {
+export default function Admin({ papel, usuarioId }) {
   const [usuarios, setUsuarios] = useState([]);
   const [pagina, setPagina] = useState(0);
   const [temMais, setTemMais] = useState(false);
@@ -60,7 +56,8 @@ export default function Admin({ restante, papel, usuarioId, aoSair }) {
 
   async function cadastrar(event) {
     event.preventDefault();
-    const dados = new FormData(event.currentTarget);
+    const formulario = event.currentTarget;
+    const dados = new FormData(formulario);
     const telegram = String(dados.get("telegram_user_id") || "").trim();
     setEnviando(true);
     setErro("");
@@ -73,7 +70,7 @@ export default function Admin({ restante, papel, usuarioId, aoSair }) {
         telegram_user_id: telegram ? Number(telegram) : null,
         pode_usar_bot: dados.get("pode_usar_bot") === "on",
       });
-      event.currentTarget.reset();
+      formulario.reset();
       setNivel("usuario");
       setAviso("Usuário cadastrado.");
       await carregar();
@@ -118,33 +115,15 @@ export default function Admin({ restante, papel, usuarioId, aoSair }) {
     }
   }
 
-  const minutos = Math.floor(restante / 60);
-  const segundos = String(restante % 60).padStart(2, "0");
   const admins = usuarios.filter((usuario) => usuario.papel === "admin").length;
 
   return (
-    <main className="admin">
-      <header>
-        <div>
-          <p className="olho">AnaliseR · {nomeNivel(papel)}</p>
-          <h1>Usuários</h1>
-          <p className="apoio">Cadastre por nível de permissão e gerencie quem já entrou.</p>
-        </div>
-        <div className="sessao">
-          <span>
-            Sessão {minutos}:{segundos}
-          </span>
-          <button type="button" className="secundario" onClick={aoSair}>
-            Sair
-          </button>
-        </div>
-      </header>
-
+    <>
       <form className="cartao grade" onSubmit={cadastrar}>
         <h2>Cadastrar usuário</h2>
         <label>
-          E-mail
-          <input name="email" type="email" required />
+          Usuário
+          <input name="email" type="text" autoComplete="off" maxLength={120} required />
         </label>
         <label>
           Senha
@@ -262,6 +241,6 @@ export default function Admin({ restante, papel, usuarioId, aoSair }) {
           Próxima
         </button>
       </nav>
-    </main>
+    </>
   );
 }

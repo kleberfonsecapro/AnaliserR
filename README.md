@@ -55,7 +55,7 @@ O administrador libera o desenvolvedor no painel, com o ID numérico do Telegram
 2. Escolha o cliente pelo nome ou pelo código `CLI-xxxx`. Cliente novo: `/novo_cliente` pede só o nome e devolve o código.
 3. Na ficha, toque em **Nova reunião** e envie o áudio da conversa. Áudio solto, sem cliente, não entra.
 4. Se a análise abrir, responda nos botões ou em texto. **Fechar mesmo assim** gera o documento final.
-5. Na ficha, reunião aberta aparece como **Reunião N · aberta**, com **Continuar**. Reunião fechada abre o texto ou o PDF.
+5. Na ficha, reunião aberta aparece como **Reunião N · aberta**, com **Continuar**. Reunião fechada abre o texto ou o PDF. Toda reunião tem **Excluir**, que pede confirmação antes de apagar relatório e transcrição em definitivo.
 
 | Comando | O que faz |
 |---|---|
@@ -76,7 +76,9 @@ O painel fica em `http://localhost:8091`. A API não tem porta no host: o nginx 
 | `gestor` | Entra no painel e cadastra apenas usuários |
 | `usuario` | Não entra no painel; usa o bot se estiver liberado |
 
-A sessão expira em 5 minutos. O primeiro administrador é criado na subida do backend, com o e-mail e a senha definidos no ambiente.
+A sessão expira em 5 minutos. Atualizar a página mantém o login enquanto esse prazo não acabar; Sair encerra na hora. O primeiro administrador é criado na subida do backend, com o usuário e a senha definidos no ambiente. O usuário pode ser um nome livre ou um e-mail; o `@` não é obrigatório. Mudar `ADMIN_PASSWORD` depois não troca a senha de quem já existe.
+
+**Esqueci a senha**: na tela de login, toque em *Esqueci a senha*. Um código de uso único (vale 10 minutos) chega no Telegram **do usuário que tem ID do Telegram cadastrado**; com ele, a tela grava a senha nova. Sem Telegram vinculado, só um administrador pode recadastrar a senha (pelo banco).
 
 ## Subir o projeto
 
@@ -123,7 +125,7 @@ Copie [`.env.example`](.env.example). Nenhum valor real entra no repositório.
 | `POSTGRES_DB` | Nome do banco |
 | `JWT_SECRET` | Segredo da sessão. Gere com `openssl rand -hex 32` |
 | `JWT_EXPIRE_MINUTES` | Duração da sessão do painel. Padrão: `5` |
-| `ADMIN_EMAIL` | E-mail do primeiro administrador |
+| `ADMIN_EMAIL` | Usuário do primeiro administrador. Nome livre ou e-mail |
 | `ADMIN_PASSWORD` | Senha do primeiro administrador |
 
 `DATABASE_URL` é montada pelo Compose. Não precisa constar no `.env`.

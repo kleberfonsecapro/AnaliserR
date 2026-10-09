@@ -39,6 +39,7 @@ from mensagens import (
     CLIENTE_SALVO,
     CONFIRMAR_CLIENTE,
     CONFIRMAR_CLIENTE_DESCONHECIDO,
+    CONFIRMAR_EXCLUSAO_REUNIAO,
     ESCOLHA_DA_ANALISE,
     MENU_CLIENTE_DETALHE,
     MENU_CLIENTE_ENTRADA,
@@ -49,6 +50,7 @@ from mensagens import (
     NOVA_REUNIAO_CLIENTE,
     NOVO_CLIENTE_NOME,
     OPCOES_CLIENTE,
+    REUNIAO_EXCLUIDA,
     SEM_REUNIAO,
     Acesso,
     classificar_acesso,
@@ -508,12 +510,20 @@ def _teclado_ficha(cliente: asyncpg.Record, reunioes: list) -> InlineKeyboardMar
         linha = [
             InlineKeyboardButton(rotulo, callback_data=f"a:{codigo}:{numero}"),
             InlineKeyboardButton("PDF", callback_data=f"p:{codigo}:{numero}"),
+            InlineKeyboardButton("Excluir", callback_data=f"x:{codigo}:{numero}"),
         ]
         if aberta:
             linha.append(InlineKeyboardButton("Continuar", callback_data=f"k:{codigo}:{numero}"))
         linhas.append(linha)
     linhas.append([InlineKeyboardButton("Voltar aos clientes", callback_data="menu")])
     return InlineKeyboardMarkup(linhas)
+
+
+def _teclado_exclusao(codigo: str, numero: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("Sim, excluir", callback_data=f"xc:{codigo}:{numero}"),
+        InlineKeyboardButton("Manter", callback_data=f"c:{codigo}"),
+    ]])
 
 
 def _teclado_perguntas(codigo: str, numero: int, relatorio: str) -> InlineKeyboardMarkup:
@@ -897,6 +907,8 @@ async def ao_toque(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             return await _toque_cliente(update, context, dado)
         if dado.startswith(("a:", "p:", "k:")):
             return await _toque_reuniao(update, context, dado)
+        if dado.startswith(("x:", "xc:")):
+            return await _toque_exclusao(update, context, dado)
         if dado.startswith(("q:", "f:")):
             return await _toque_decisao(update, context, dado)
     except Exception:
@@ -953,6 +965,59 @@ async def _toque_reuniao(update: Update, context: ContextTypes.DEFAULT_TYPE, dad
         )
     await responder(update, f"*{_md(cliente['nome'])}* ({_md(codigo)}) — reunião {numero}")
     await enviar_relatorio(update, registro["relatorio_gerado"])
+    return ESCOLHER_CLIENTE
+
+
+async def _toque_exclusao(update: Update, context: ContextTypes.DEFAULT_TYPE, dado: str) -> int:
+    """Exclusão em duas etapas: `x:` pede confirmação, `xc:` apaga de vez."""
+    partes = dado.split(":", 2)
+    if len(partes) != 3:
+        await responder(update, "Não consegui ler esse botão.")
+        return ESCOLHER_CLIENTE
+    acao, codigo, bruto = partes
+    try:
+        numero = int(bruto)
+    except ValueError:
+        await responder(update, "Não consegui abrir essa reunião.")
+        return ESCOLHER_CLIENTE
+    cliente = await db.buscar_cliente_por_codigo(codigo)
+    if cliente is None:
+        await responder(update, f"Não achei {codigo}.")
+        return ESCOLHER_CLIENTE
+
+    if acao == "x":
+        registro = await db.buscar_reuniao(cliente["id"], numero)
+        if registro is None:
+            await responder(update, f"{cliente['nome']} ({codigo}) não tem reunião {numero}.")
+            return ESCOLHER_CLIENTE
+        await responder(
+            update,
+            CONFIRMAR_EXCLUSAO_REUNIAO.format(
+                nome=_md(cliente["nome"]), codigo=_md(codigo), numero=numero
+            ),
+            _teclado_exclusao(codigo, numero),
+        )
+        return ESCOLHER_CLIENTE
+
+    # Se a análise desta reunião estava aberta nesta conversa, não resta nada
+    # para responder — limpa o contexto para não cair no "já está fechada".
+    aberta = context.user_data.get("cliente_nova_reuniao")
+    if aberta is not None and aberta.get("codigo") == codigo \
+            and context.user_data.get("numero_reservado") == numero:
+        context.user_data.pop("cliente_nova_reuniao", None)
+        context.user_data.pop("numero_reservado", None)
+        context.user_data.pop("transcricao_pendente", None)
+
+    excluiu = await db.excluir_reuniao(cliente["id"], numero)
+    if not excluiu:
+        await responder(update, f"{cliente['nome']} ({codigo}) não tem reunião {numero}.")
+        return ESCOLHER_CLIENTE
+    await responder(update, REUNIAO_EXCLUIDA.format(
+        nome=_md(cliente["nome"]), codigo=_md(codigo), numero=numero
+    ))
+    cliente_atualizado = await db.buscar_cliente_por_codigo(codigo)
+    if cliente_atualizado is not None:
+        await _mostrar_cliente(update, cliente_atualizado)
     return ESCOLHER_CLIENTE
 
 
@@ -1473,7 +1538,7 @@ async def _texto_inesperado_aguardando(update: Update, context: ContextTypes.DEF
 def _toque() -> CallbackQueryHandler:
     return CallbackQueryHandler(
         ao_toque,
-        pattern=r"^(menu|novo|c:.+|n:.+|a:.+:\d+|p:.+:\d+|k:.+:\d+|f:.+:\d+|q:.+:\d+:\d+[A-Za-z])$",
+        pattern=r"^(menu|novo|c:.+|n:.+|a:.+:\d+|p:.+:\d+|k:.+:\d+|x:.+:\d+|xc:.+:\d+|f:.+:\d+|q:.+:\d+:\d+[A-Za-z])$",
     )
 
 

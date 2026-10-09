@@ -46,6 +46,7 @@ async def db():
     await database.connect()
     async with database.pool.acquire() as conn:
         await conn.execute("TRUNCATE usuarios RESTART IDENTITY CASCADE")
+        await conn.execute("TRUNCATE clientes RESTART IDENTITY CASCADE")
         await conn.execute("TRUNCATE auditoria RESTART IDENTITY CASCADE")
         await conn.execute("TRUNCATE tokens_revogados")
 

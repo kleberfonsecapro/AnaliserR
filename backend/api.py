@@ -1,27 +1,33 @@
 """API de login do admin e cadastro de quem pode usar o bot."""
 
 import logging
-import re
-from datetime import UTC, datetime
+import secrets
+import string
+from datetime import UTC, datetime, timedelta
 
 import asyncpg
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
 from auth import criar_token, hash_senha, ler_token, minutos_expiracao, verificar_senha
 from database import db
 from mensagens import classificar_acesso
-from notificacoes import avisar_boas_vindas
-from rate_limit import limitador_login
+from notificacoes import avisar_boas_vindas, avisar_recuperacao
+from pdf_relatorio import gerar_pdf
+from rate_limit import LimitadorTaxa, limitador_login
 
 logger = logging.getLogger("analiser.api")
 _bearer = HTTPBearer(auto_error=False)
-_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+$")
+_LOGIN_MAX = 120
 NIVEIS = ("admin", "gestor", "usuario")
 _ENTRA_NO_PAINEL = ("admin", "gestor")
 _limite_login = limitador_login()
+_limite_recuperacao = LimitadorTaxa(maximo=3, janela_segundos=600)
+_ALFABETO_CODIGO = string.ascii_uppercase + string.digits
+_VALIDADE_CODIGO = timedelta(minutes=10)
 
 
 def _ip_do_cliente(request: Request) -> str:
@@ -32,10 +38,11 @@ def _ip_do_cliente(request: Request) -> str:
     return request.client.host if request.client else "desconhecido"
 
 
-def _email(valor: str) -> str:
+def _login(valor: str) -> str:
+    """Usuário de entrada: nome livre ou e-mail. O @ não é obrigatório."""
     limpo = valor.strip().lower()
-    if not _EMAIL.match(limpo):
-        raise ValueError("e-mail inválido")
+    if not limpo or any(caractere.isspace() for caractere in limpo) or len(limpo) > _LOGIN_MAX:
+        raise ValueError("informe o usuário, sem espaços")
     return limpo
 
 
@@ -57,7 +64,32 @@ class LoginIn(BaseModel):
     @field_validator("email")
     @classmethod
     def validar_email(cls, valor: str) -> str:
-        return _email(valor)
+        return _login(valor)
+
+
+class RecuperarIn(BaseModel):
+    email: str
+
+    @field_validator("email")
+    @classmethod
+    def validar_email(cls, valor: str) -> str:
+        return _login(valor)
+
+
+class RedefinirIn(BaseModel):
+    email: str
+    codigo: str = Field(min_length=8, max_length=8)
+    password: str = Field(min_length=8)
+
+    @field_validator("email")
+    @classmethod
+    def validar_email(cls, valor: str) -> str:
+        return _login(valor)
+
+    @field_validator("codigo")
+    @classmethod
+    def validar_codigo(cls, valor: str) -> str:
+        return valor.strip().upper()
 
 
 def _nivel(valor: str) -> str:
@@ -76,7 +108,7 @@ class UsuarioIn(BaseModel):
     @field_validator("email")
     @classmethod
     def validar_email(cls, valor: str) -> str:
-        return _email(valor)
+        return _login(valor)
 
     @field_validator("papel")
     @classmethod
@@ -103,6 +135,24 @@ class UsuarioOut(BaseModel):
     papel: str
     telegram_user_id: int | None
     pode_usar_bot: bool
+
+
+class ClienteOut(BaseModel):
+    codigo: str
+    nome: str
+    total_reunioes: int
+    data_criacao: datetime
+
+
+class ReuniaoOut(BaseModel):
+    numero: int
+    situacao: str
+    data_criacao: datetime
+    relatorio_gerado: str
+
+
+class ClienteDetalhe(ClienteOut):
+    reunioes: list[ReuniaoOut]
 
 
 def _usuario(row: asyncpg.Record) -> UsuarioOut:
@@ -185,7 +235,7 @@ def criar_rotas() -> APIRouter:
         if usuario is None or not verificar_senha(corpo.password, usuario["senha_hash"]):
             _limite_login.registrar_falha(chave)
             logger.warning("tentativa de login malsucedida: %s (%s)", corpo.email, ip)
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "e-mail ou senha incorretos")
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "usuário ou senha incorretos")
         if usuario["papel"] not in _ENTRA_NO_PAINEL:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "sem acesso ao painel")
         _limite_login.registrar_sucesso(chave)
@@ -197,6 +247,58 @@ def criar_rotas() -> APIRouter:
             "papel": usuario["papel"],
             "usuario_id": usuario["id"],
         }
+
+    _RECUPERACAO_RESPOSTA = {
+        "mensagem": "Se o usuário tiver acesso ao painel, um código chega no Telegram."
+    }
+
+    @rotas.post("/auth/recuperar", status_code=status.HTTP_202_ACCEPTED)
+    async def recuperar(corpo: RecuperarIn, request: Request) -> dict:
+        """Manda um código de uso único para o Telegram do usuário.
+
+        Resposta e status são sempre os mesmos, exista ou não a conta: o
+        endpoint não serve para descobrir quem está cadastrado.
+        """
+        ip = _ip_do_cliente(request)
+        chave = f"rec|{ip}|{corpo.email}"
+        if _limite_recuperacao.bloqueado(chave):
+            logger.warning("recuperação bloqueada por excesso: %s (%s)", corpo.email, ip)
+            return _RECUPERACAO_RESPOSTA
+        _limite_recuperacao.registrar_falha(chave)
+
+        usuario = await db.buscar_usuario_por_email(corpo.email)
+        if (
+            usuario is None
+            or usuario["papel"] not in _ENTRA_NO_PAINEL
+            or usuario["telegram_user_id"] is None
+        ):
+            return _RECUPERACAO_RESPOSTA
+        codigo = "".join(secrets.choice(_ALFABETO_CODIGO) for _ in range(8))
+        await db.registrar_recuperacao(
+            usuario["id"], hash_senha(codigo), datetime.now(UTC) + _VALIDADE_CODIGO
+        )
+        if await avisar_recuperacao(usuario["telegram_user_id"], codigo):
+            logger.info("recuperação de senha iniciada para %s", corpo.email)
+        return _RECUPERACAO_RESPOSTA
+
+    @rotas.post("/auth/redefinir")
+    async def redefinir(corpo: RedefinirIn, request: Request) -> dict:
+        """Troca a senha se o código estiver certo e dentro da validade."""
+        usuario = await db.buscar_usuario_por_email(corpo.email)
+        pedido = None if usuario is None else await db.buscar_recuperacao(usuario["id"])
+        if (
+            usuario is None
+            or pedido is None
+            or not verificar_senha(corpo.codigo, pedido["codigo_hash"])
+        ):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "código inválido ou vencido; peça outro"
+            )
+        await db.redefinir_senha(usuario["id"], hash_senha(corpo.password))
+        await db.limpar_recuperacao(usuario["id"])
+        logger.info("senha redefinida por recuperação para %s", corpo.email)
+        await _auditar("redefinir_senha", usuario, ip=_ip_do_cliente(request))
+        return {"mensagem": "Senha nova gravada. Entre com ela no painel."}
 
     @rotas.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
     async def logout(credenciais: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> None:
@@ -243,7 +345,7 @@ def criar_rotas() -> APIRouter:
                 corpo.pode_usar_bot,
             )
         except asyncpg.UniqueViolationError:
-            raise HTTPException(status.HTTP_409_CONFLICT, "e-mail ou ID do Telegram já cadastrado")
+            raise HTTPException(status.HTTP_409_CONFLICT, "usuário ou ID do Telegram já cadastrado")
         logger.info("usuário %s cadastrado com nível %s", row["id"], row["papel"])
         await _auditar(
             "criar_usuario",
@@ -309,6 +411,87 @@ def criar_rotas() -> APIRouter:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "mantenha ao menos um administrador")
         await db.excluir_usuario(usuario_id)
         await _auditar("excluir_usuario", ator, alvo, campos=None, ip=_ip_do_cliente(request))
+
+    @rotas.get("/clientes", response_model=list[ClienteOut])
+    async def listar_clientes(_ator: asyncpg.Record = Depends(painel_atual)) -> list[ClienteOut]:
+        return [
+            ClienteOut(
+                codigo=row["codigo"],
+                nome=row["nome"],
+                total_reunioes=row["total_reunioes"],
+                data_criacao=row["data_criacao"],
+            )
+            for row in await db.listar_clientes()
+        ]
+
+    @rotas.get("/clientes/{codigo}", response_model=ClienteDetalhe)
+    async def detalhar_cliente(
+        codigo: str,
+        _ator: asyncpg.Record = Depends(painel_atual),
+    ) -> ClienteDetalhe:
+        cliente = await db.buscar_cliente_por_codigo(codigo)
+        if cliente is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "cliente não encontrado")
+        reunioes = await db.listar_reunioes_do_cliente(cliente["id"])
+        return ClienteDetalhe(
+            codigo=cliente["codigo"],
+            nome=cliente["nome"],
+            total_reunioes=cliente["total_reunioes"],
+            data_criacao=cliente["data_criacao"],
+            reunioes=[
+                ReuniaoOut(
+                    numero=reuniao["numero"],
+                    situacao=reuniao["situacao"],
+                    data_criacao=reuniao["data_criacao"],
+                    relatorio_gerado=reuniao["relatorio_gerado"],
+                )
+                for reuniao in reunioes
+            ],
+        )
+
+    @rotas.get("/clientes/{codigo}/reunioes/{numero}/pdf")
+    async def pdf_da_reuniao(
+        codigo: str,
+        numero: int,
+        _ator: asyncpg.Record = Depends(painel_atual),
+    ) -> Response:
+        cliente = await db.buscar_cliente_por_codigo(codigo)
+        if cliente is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "cliente não encontrado")
+        registro = await db.buscar_reuniao(cliente["id"], numero)
+        if registro is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "reunião não encontrada")
+        conteudo = gerar_pdf(
+            registro["relatorio_gerado"],
+            numero,
+            registro["data_criacao"],
+            registro["situacao"],
+        )
+        nome = f"AnaliseR-{cliente['codigo']}-reuniao-{numero}.pdf"
+        return Response(
+            content=conteudo,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{nome}"'},
+        )
+
+    @rotas.delete("/clientes/{codigo}", status_code=status.HTTP_204_NO_CONTENT)
+    async def excluir_cliente(
+        codigo: str,
+        request: Request,
+        ator: asyncpg.Record = Depends(painel_atual),
+    ) -> None:
+        cliente = await db.buscar_cliente_por_codigo(codigo)
+        if cliente is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "cliente não encontrado")
+        await db.excluir_cliente(cliente["id"])
+        await _auditar(
+            "excluir_cliente",
+            ator,
+            alvo_id=cliente["id"],
+            alvo_email=cliente["codigo"],
+            valores={"nome": cliente["nome"], "codigo": cliente["codigo"]},
+            ip=_ip_do_cliente(request),
+        )
 
     return rotas
 

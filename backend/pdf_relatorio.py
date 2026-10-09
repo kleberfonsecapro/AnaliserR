@@ -47,7 +47,7 @@ class _Relatorio(FPDF):
     def header(self) -> None:
         self.set_font("DejaVu", "B", 9)
         self.set_text_color(34, 82, 76)
-        self.cell(0, 6, "AnaliseR  ·  Prefeitura Municipal de Cuiabá", new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 6, "AnaliseR", new_x="LMARGIN", new_y="NEXT")
         self.set_draw_color(245, 199, 69)
         self.set_line_width(0.6)
         self.line(self.l_margin, self.get_y(), self.w - self.r_margin, self.get_y())

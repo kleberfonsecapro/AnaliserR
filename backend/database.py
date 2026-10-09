@@ -161,7 +161,7 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetchrow(
                 """
-                SELECT c.id, c.codigo, c.nome, c.nome_normalizado,
+                SELECT c.id, c.codigo, c.nome, c.nome_normalizado, c.data_criacao,
                        COUNT(r.id)::int AS total_reunioes,
                        COALESCE(MAX(r.numero), 0) AS ultima_reuniao
                 FROM clientes c
@@ -284,6 +284,30 @@ class Database:
             cliente_id,
             situacao,
         )
+
+    async def excluir_reuniao(self, cliente_id: int, numero: int) -> bool:
+        """Apaga a reunião do cliente. False se não existia."""
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            resultado = await conn.execute(
+                "DELETE FROM reunioes WHERE cliente_id = $1 AND numero = $2",
+                cliente_id,
+                numero,
+            )
+        if resultado.endswith("1"):
+            logger.info("reunião %s do cliente %s excluída", numero, cliente_id)
+            return True
+        return False
+
+    async def excluir_cliente(self, cliente_id: int) -> bool:
+        """Apaga o cliente. As reuniões caem pela cascata do banco."""
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            resultado = await conn.execute("DELETE FROM clientes WHERE id = $1", cliente_id)
+        if resultado.endswith("1"):
+            logger.info("cliente %s excluído", cliente_id)
+            return True
+        return False
 
     async def listar_reunioes_do_cliente(self, cliente_id: int) -> list[asyncpg.Record]:
         assert self.pool is not None
@@ -509,6 +533,75 @@ class Database:
         assert self.pool is not None
         async with self.pool.acquire() as conn:
             resultado = await conn.execute("DELETE FROM usuarios WHERE id = $1", usuario_id)
+        return resultado.endswith("1")
+
+    # ------------------------------------------------------- recuperação senha
+
+    async def registrar_recuperacao(self, usuario_id: int, codigo_hash: str,
+                                    expira_em) -> None:
+        """Um pedido novo substitui o anterior: só o código mais recente vale."""
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO recuperacao_senha (usuario_id, codigo_hash, expira_em)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (usuario_id) DO UPDATE SET
+                    codigo_hash = EXCLUDED.codigo_hash,
+                    expira_em   = EXCLUDED.expira_em,
+                    tentativas  = 0,
+                    criado_em   = NOW()
+                """,
+                usuario_id,
+                codigo_hash,
+                expira_em,
+            )
+
+    async def buscar_recuperacao(self, usuario_id: int) -> asyncpg.Record | None:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            await conn.execute("DELETE FROM recuperacao_senha WHERE expira_em < NOW()")
+            record = await conn.fetchrow(
+                """
+                SELECT usuario_id, codigo_hash, expira_em, tentativas
+                FROM recuperacao_senha
+                WHERE usuario_id = $1
+                """,
+                usuario_id,
+            )
+            if record is None:
+                return None
+            tentativas = await conn.fetchval(
+                """
+                UPDATE recuperacao_senha
+                SET tentativas = tentativas + 1
+                WHERE usuario_id = $1
+                RETURNING tentativas
+                """,
+                usuario_id,
+            )
+            if tentativas > 5:
+                await conn.execute(
+                    "DELETE FROM recuperacao_senha WHERE usuario_id = $1", usuario_id
+                )
+                return None
+            return record
+
+    async def limpar_recuperacao(self, usuario_id: int) -> None:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM recuperacao_senha WHERE usuario_id = $1", usuario_id
+            )
+
+    async def redefinir_senha(self, usuario_id: int, senha_hash: str) -> bool:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            resultado = await conn.execute(
+                "UPDATE usuarios SET senha_hash = $2 WHERE id = $1",
+                usuario_id,
+                senha_hash,
+            )
         return resultado.endswith("1")
 
     # ------------------------------------------------------------- sessão JWT

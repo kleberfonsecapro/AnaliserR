@@ -25,6 +25,7 @@ MIGRACAO_0005_FIM_ANALISES_MVP = "0005_fim_analises_mvp"
 MIGRACAO_0006_TOKENS_REVOGADOS = "0006_tokens_revogados"
 MIGRACAO_0007_AUDITORIA = "0007_auditoria"
 MIGRACAO_0008_PROMPT_VERSAO = "0008_prompt_versao"
+MIGRACAO_0009_RECUPERACAO_SENHA = "0009_recuperacao_senha"
 
 
 async def aplicar(pool: asyncpg.Pool) -> None:
@@ -74,6 +75,7 @@ async def aplicar(pool: asyncpg.Pool) -> None:
             (MIGRACAO_0006_TOKENS_REVOGADOS, _criar_tokens_revogados),
             (MIGRACAO_0007_AUDITORIA, _criar_auditoria),
             (MIGRACAO_0008_PROMPT_VERSAO, _criar_prompt_versao),
+            (MIGRACAO_0009_RECUPERACAO_SENHA, _criar_recuperacao_senha),
         ]
         for nome, passo in novas:
             if nome not in aplicadas:
@@ -354,3 +356,22 @@ async def _criar_auditoria(conn: asyncpg.Connection) -> None:
 async def _criar_prompt_versao(conn: asyncpg.Connection) -> None:
     """0008 — cada reunião passa a registrar a versão dos prompts (DEV-002)."""
     await conn.execute("ALTER TABLE reunioes ADD COLUMN IF NOT EXISTS prompt_versao TEXT")
+
+
+async def _criar_recuperacao_senha(conn: asyncpg.Connection) -> None:
+    """0009 — código de uso único para redefinir a senha, enviado pelo Telegram.
+
+    Guarda o bcrypt do código, nunca o código em si: quem ler a tabela não
+    pode redefinir senha de ninguém.
+    """
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS recuperacao_senha (
+            usuario_id  INTEGER PRIMARY KEY REFERENCES usuarios (id) ON DELETE CASCADE,
+            codigo_hash TEXT NOT NULL,
+            expira_em   TIMESTAMPTZ NOT NULL,
+            tentativas  INTEGER NOT NULL DEFAULT 0,
+            criado_em   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )

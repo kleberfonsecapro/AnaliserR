@@ -6,6 +6,7 @@ lado do campo de texto, no chat do Telegram.
 """
 
 import logging
+import os
 
 from telegram import Bot, BotCommand, MenuButtonCommands
 from telegram.error import Forbidden, TelegramError
@@ -29,6 +30,18 @@ COMANDOS = (
 def registrar_bot(bot: Bot) -> None:
     global _bot
     _bot = bot
+
+
+def _obter_bot() -> Bot | None:
+    """No processo do bot o `_bot` já está registrado. Na API não: lá criamos
+    um cliente sob demanda, só para envio (polling não passa por aqui)."""
+    global _bot
+    if _bot is None:
+        token = os.environ.get("TELEGRAM_BOT_TOKEN")
+        if not token:
+            return None
+        _bot = Bot(token)
+    return _bot
 
 
 async def descrever_bot() -> None:
@@ -81,6 +94,32 @@ async def _primeiro_nome(telegram_user_id: int) -> str | None:
         logger.warning("não foi possível ler o perfil do usuário %s: %s", telegram_user_id, exc)
         return None
     return chat.first_name
+
+
+async def avisar_recuperacao(telegram_user_id: int, codigo: str) -> bool:
+    """Código de redefinição de senha do painel, direto no Telegram do usuário."""
+    bot = _obter_bot()
+    if bot is None:
+        logger.info("bot indisponível; código do usuário %s não enviado", telegram_user_id)
+        return False
+    try:
+        await bot.send_message(
+            chat_id=telegram_user_id,
+            text=(
+                "Pedido de recuperação de senha do painel AnaliseR.\n\n"
+                f"Código: *{codigo}* — vale por 10 minutos, uma única vez.\n\n"
+                "Se não foi você, ignore: nada muda sem o código."
+            ),
+            parse_mode="Markdown",
+        )
+    except TelegramError as exc:
+        logger.warning(
+            "não foi possível enviar o código de recuperação para %s: %s",
+            telegram_user_id, exc,
+        )
+        return False
+    logger.info("código de recuperação enviado para o usuário %s", telegram_user_id)
+    return True
 
 
 async def avisar_boas_vindas(

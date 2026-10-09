@@ -181,6 +181,12 @@ CANCELADO = """Cancelado. Nada foi salvo.
 
 Pode mandar o áudio de novo quando quiser."""
 
+CONFIRMAR_EXCLUSAO_REUNIAO = """Excluir a reunião {numero} de *{nome}* ({codigo})?
+
+O relatório e a transcrição somem de vez. Não tem volta."""
+
+REUNIAO_EXCLUIDA = """*{nome}* ({codigo}) — reunião {numero} excluída."""
+
 NOVA_REUNIAO_CLIENTE = """*Nova reunião*
 
 Para quem é a reunião?
