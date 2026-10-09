@@ -105,34 +105,39 @@ Cada ticket é fino e end-to-end (tracer bullet): entra código + teste/validaç
 - **Bloqueado por:** TP-01
 - **Desbloqueia:** —
 
-## Onda 3 — Infraestrutura de containers
+## Onda 3 — Infraestrutura de containers — ✅ concluída em 2026-10-09
 
 ### TP-14 · SEC-005 — Containers não-root
 - **Prioridade:** P1 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — backend `USER app`, frontend `USER nginx`
 - **Escopo:** `USER` não-root nos Dockerfiles do backend e frontend (nginx em porta alta interna ou `setcap`); compose sobe normal.
 - **Bloqueado por:** —
 - **Desbloqueia:** TP-16
 
 ### TP-15 · OPS-003 — Healthchecks e `depends_on` com condição
 - **Prioridade:** P1 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — healthchecks backend/frontend + depends_on condicional
 - **Escopo:** healthcheck no backend (`/health`) e frontend (`wget` no nginx); `depends_on: condition: service_healthy` no frontend.
 - **Bloqueado por:** —
 - **Desbloqueia:** TP-16
 
 ### TP-16 · OPS-008 — Compose limpo com limites de recursos
 - **Prioridade:** P2 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — compose sem duplicação, com limites e rotação de log
 - **Escopo:** remover duplicação `environment:` × `env_file` (manter só `DATABASE_URL` montada), adicionar `mem_limit`/`cpus` e logging com rotação.
 - **Bloqueado por:** TP-14, TP-15 (mexem nos mesmos arquivos)
 - **Desbloqueia:** —
 
 ### TP-17 · SEC-006 — Headers de segurança e compressão no nginx
 - **Prioridade:** P1 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — headers+gzip+cache no nginx (HSTS ativo sob TLS do proxy)
 - **Escopo:** HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy, CSP, gzip, `Cache-Control: immutable` para assets com hash, `client_max_body_size`.
 - **Bloqueado por:** TP-06 (HSTS exige TLS ativo)
 - **Desbloqueia:** —
 
 ### TP-18 · SEC-007 — TrustedHost e CORS explícito
 - **Prioridade:** P2 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — TrustedHostMiddleware; CORS omitido (same-origin)
 - **Escopo:** `TrustedHostMiddleware` com hosts permitidos; `CORSMiddleware` só se houver consumo cross-origin real (senão, omitir).
 - **Bloqueado por:** —
 - **Desbloqueia:** —

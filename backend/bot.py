@@ -11,6 +11,7 @@ from pathlib import Path
 
 import asyncpg
 from fastapi import FastAPI
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from groq import AsyncGroq
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.error import TelegramError
@@ -1672,4 +1673,12 @@ async def ciclo_de_vida(_app: FastAPI):
 
 
 app = FastAPI(title="AnaliseR", lifespan=ciclo_de_vida)
+# SEC-007: só aceita Host conhecido (rede interna + domínio público do proxy).
+# CORS não é liberado: o painel fala com /api na mesma origem (nginx).
+_hosts = [h.strip() for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h.strip()]
+_hosts += ["localhost", "127.0.0.1", "backend", "frontend", "proxy"]
+dominio = os.environ.get("DOMAIN", "").strip()
+if dominio:
+    _hosts.append(dominio)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=_hosts)
 app.include_router(criar_rotas())

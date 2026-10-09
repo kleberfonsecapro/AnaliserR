@@ -205,7 +205,7 @@ Não existe teto de duração, tamanho ou frequência por usuário. Um usuário 
 
 ### SEC-005 · Container rodando como root
 
-- **Status (🔴 ABERTO — auditoria 2026-10-09):** backend/Dockerfile e frontend/Dockerfile sem USER não-root.
+- **Status (✅ RESOLVIDO — onda 3, 2026-10-09):** `USER app` no backend (python:3.11-slim) e `USER nginx` no frontend (porta interna 8080).
 
 - **Arquivos:** `backend/Dockerfile:1-15`, `frontend/Dockerfile:11-16`
 - **Severidade:** P1 · **Esforço:** S
@@ -222,7 +222,7 @@ Nenhum dos serviços define `USER`. O processo do backend e o worker do nginx ro
 
 ### SEC-006 · Headers de segurança e compressão ausentes no nginx
 
-- **Status (🔴 ABERTO — auditoria 2026-10-09):** frontend/nginx.conf sem headers de segurança, gzip ou Cache-Control.
+- **Status (✅ RESOLVIDO — onda 3, 2026-10-09):** headers (CSP, X-Frame-Options, nosniff, Referrer-Policy, HSTS), gzip, Cache-Control immutable nos assets, client_max_body_size; X-Forwarded-Proto no proxy.
 
 - **Arquivo:** `frontend/nginx.conf`
 - **Severidade:** P1 · **Esforço:** S
@@ -275,7 +275,7 @@ Na **cada** subida o código faz `DROP CONSTRAINT` em todas as constraints de ch
 
 ### OPS-003 · Sem healthcheck no backend e no frontend
 
-- **Status (🔴 ABERTO — auditoria 2026-10-09):** Só db tem healthcheck; backend/frontend sem healthcheck e depends_on sem condition (compose:42-43).
+- **Status (✅ RESOLVIDO — onda 3, 2026-10-09):** healthcheck no backend (`/health` via python) e frontend (wget); `depends_on: service_healthy` no frontend e no proxy.
 
 - **Arquivo:** `docker-compose.yml:18-41`
 - **Severidade:** P1 · **Esforço:** S
@@ -363,7 +363,7 @@ Criação, edição e remoção de usuários só geram log de nível `INFO` com 
 
 ### SEC-007 · Backend sem `TrustedHostMiddleware` nem CORS explícito
 
-- **Status (🔴 ABERTO — auditoria 2026-10-09):** FastAPI sem TrustedHost/CORS explícito (bot.py:1670).
+- **Status (✅ RESOLVIDO — onda 3, 2026-10-09):** `TrustedHostMiddleware` com `ALLOWED_HOSTS` (bot.py). CORS propositalmente omitido: o painel é same-origin via proxy do nginx; reabrir se surgir consumo cross-origin.
 
 - **Arquivo:** `backend/bot.py:209-210`
 - **Severidade:** P2 · **Esforço:** S
@@ -452,7 +452,7 @@ Não existe `.gitignore` e o `.env` contém credenciais reais de produção (tok
 
 ### OPS-008 · `docker-compose.yml` redundante e sem limites de recursos
 
-- **Status (🔴 ABERTO — auditoria 2026-10-09):** environment duplica env_file (compose:23-30); sem limites de recursos nem rotação de log.
+- **Status (✅ RESOLVIDO — onda 3, 2026-10-09):** `environment:` reduzido ao DATABASE_URL montado; `mem_limit`/`cpus` e rotação de log (10m×3) em todos os serviços.
 
 - **Arquivo:** `docker-compose.yml:18-41`
 - **Severidade:** P2 · **Esforço:** S
