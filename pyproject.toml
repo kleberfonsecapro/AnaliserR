@@ -12,7 +12,6 @@ ignore = [
     "B008",     # chamada de função em argumento padrão (legado)
     "B904",     # raise sem from dentro de except (legado)
     "E741",     # variável de nome ambíguo (legado)
-    "ASYNC240", # chamada bloqueante em async — pendente do TP-05 (BUG-002)
     "F841",     # variável não usada (legado)
 ]
 

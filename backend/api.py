@@ -5,7 +5,7 @@ import re
 
 import asyncpg
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
@@ -13,12 +13,22 @@ from auth import criar_token, hash_senha, ler_token, minutos_expiracao, verifica
 from database import db
 from mensagens import classificar_acesso
 from notificacoes import avisar_boas_vindas
+from rate_limit import limitador_login
 
 logger = logging.getLogger("analiser.api")
 _bearer = HTTPBearer(auto_error=False)
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+$")
 NIVEIS = ("admin", "gestor", "usuario")
 _ENTRA_NO_PAINEL = ("admin", "gestor")
+_limite_login = limitador_login()
+
+
+def _ip_do_cliente(request: Request) -> str:
+    """IP real: o frontend (nginx) injeta X-Forwarded-For ao fazer proxy."""
+    encaminhado = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if encaminhado:
+        return encaminhado
+    return request.client.host if request.client else "desconhecido"
 
 
 def _email(valor: str) -> str:
@@ -26,6 +36,17 @@ def _email(valor: str) -> str:
     if not _EMAIL.match(limpo):
         raise ValueError("e-mail inválido")
     return limpo
+
+
+_limite_login = limitador_login()
+
+
+def _ip_do_cliente(request: Request) -> str:
+    """IP real atrás do nginx: primeiro do X-Forwarded-For, senão o socket."""
+    encaminhado = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if encaminhado:
+        return encaminhado
+    return request.client.host if request.client else "?"
 
 
 class LoginIn(BaseModel):
@@ -147,12 +168,23 @@ def criar_rotas() -> APIRouter:
         return {"status": "ok"}
 
     @rotas.post("/auth/login")
-    async def login(corpo: LoginIn) -> dict:
+    async def login(corpo: LoginIn, request: Request) -> dict:
+        ip = _ip_do_cliente(request)
+        chave = f"{ip}|{corpo.email}"
+        if _limite_login.bloqueado(chave):
+            logger.warning("login bloqueado por excesso de tentativas: %s (%s)", corpo.email, ip)
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "muitas tentativas; aguarde alguns minutos e tente de novo",
+            )
         usuario = await db.buscar_usuario_por_email(corpo.email)
         if usuario is None or not verificar_senha(corpo.password, usuario["senha_hash"]):
+            _limite_login.registrar_falha(chave)
+            logger.warning("tentativa de login malsucedida: %s (%s)", corpo.email, ip)
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "e-mail ou senha incorretos")
         if usuario["papel"] not in _ENTRA_NO_PAINEL:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "sem acesso ao painel")
+        _limite_login.registrar_sucesso(chave)
         token = criar_token(usuario["id"], usuario["papel"])
         return {
             "access_token": token,

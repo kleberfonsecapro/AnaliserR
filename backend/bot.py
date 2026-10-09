@@ -241,8 +241,11 @@ def fatiar_texto(texto: str, limite: int = LIMITE_TELEGRAM) -> list[str]:
 
 async def transcrever(caminho: Path) -> str:
     assert _groq is not None
+    # Leitura em thread: áudio de até 20 MB não pode travar o event loop
+    # dentro da chamada à Groq (BUG-002).
+    conteudo = await asyncio.to_thread(caminho.read_bytes)
     resultado = await _groq.audio.transcriptions.create(
-        file=(caminho.name, caminho.read_bytes()),
+        file=(caminho.name, conteudo),
         model=os.environ.get("GROQ_WHISPER_MODEL", "whisper-large-v3"),
         language="pt",
         response_format="json",
@@ -1257,7 +1260,10 @@ async def _processar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE,
     async with _semaforo_audio:
         try:
             arquivo = await context.bot.get_file(audio.file_id)
-            await arquivo.download_to_drive(custom_path=str(caminho))
+            # A rede é assíncrona (PTB); a escrita em disco não é. Em thread
+            # separada para não travar o loop durante o download.
+            conteudo = await arquivo.download_as_bytearray()
+            await asyncio.to_thread(caminho.write_bytes, bytes(conteudo))
             transcricao = await transcrever(caminho)
             if not transcricao:
                 await update.message.reply_text("Não consegui ouvir conteúdo nesse áudio.")

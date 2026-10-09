@@ -68,7 +68,7 @@ O áudio aceito tem até 20 MB e 30 minutos. Há um minuto de espera entre áudi
 
 ### Painel
 
-O painel fica em `http://localhost:8091`. A API sobe em `http://localhost:8092`. O nginx do frontend encaminha `/api/` para o backend.
+O painel fica em `http://localhost:8091`. A API não tem porta no host: o nginx do frontend encaminha `/api/` para o backend pela rede interna. Para acesso externo, use o proxy TLS (seção anterior).
 
 | Papel | O que pode |
 |---|---|
@@ -95,8 +95,16 @@ docker compose up -d --build
 | Serviço | Porta no host |
 |---|---|
 | Painel | `8091` |
-| API | `8092` |
+| API | só na rede interna do Compose (SEC-001) |
 | PostgreSQL | só na rede interna do Compose |
+
+Para expor o painel com HTTPS, defina `DOMAIN=painel.suaorg.com.br` no `.env` (domínio apontando para o host, portas 80/443 livres) e suba o proxy:
+
+```bash
+docker compose --profile tls up -d proxy
+```
+
+O Caddy emite/renova o certificado via Let's Encrypt e redireciona HTTP→HTTPS.
 
 O esquema é aplicado na subida do backend, em [`backend/migracoes.py`](backend/migracoes.py). [`backend/init.sql`](backend/init.sql) cobre só o banco vazio.
 

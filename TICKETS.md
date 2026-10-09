@@ -31,22 +31,25 @@ Cada ticket é fino e end-to-end (tracer bullet): entra código + teste/validaç
 - **Bloqueado por:** —
 - **Desbloqueia:** TP-06 (reformulação da autenticação em cima da base nova).
 
-## Onda 1 — P0 (bloqueadores)
+## Onda 1 — P0 (bloqueadores) — ✅ código entregue em 2026-10-09 (TP-06 aguarda domínio)
 
 ### TP-04 · SEC-002 — Rate limit no login
 - **Prioridade:** P0 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — limitador por IP+e-mail com 429 e log de tentativa (rate_limit.py + api.py), 7 testes novos.
 - **Escopo:** limite por IP+e-mail em `POST /auth/login` (slowapi ou implementação própria com janela deslizante), resposta `429`, registro de tentativa malsucedida (IP, e-mail, horário) e teste de bloqueio.
 - **Bloqueado por:** TP-01 (aceite exige teste automatizado)
 - **Desbloqueia:** —
 
 ### TP-05 · BUG-002 — Download de áudio sem bloquear o event loop
 - **Prioridade:** P0 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — disco em `asyncio.to_thread`; regra ASYNC240 reativada no ruff como guarda contínua; teste de não-bloqueio do loop.
 - **Escopo:** substituir `download_to_drive` no handler async (`bot.py:1262`) por `asyncio.to_thread`/`download_as_bytearray`; validar `/health` respondendo < 100 ms durante um download; teste de concorrência.
 - **Bloqueado por:** TP-01 (aceite exige teste de integração)
 - **Desbloqueia:** —
 
 ### TP-06 · SEC-001 — TLS e fechamento da porta 8092
 - **Prioridade:** P0 · **Esforço:** M
+- **Status: 🟡 PARCIAL (2026-10-09)** — porta 8092 fechada no host e backend acessível só pela rede interna; proxy Caddy com Let's Encrypt pronto (profile `tls`). Falta definir/apontar o domínio e subir o proxy no servidor (decisão de infra).
 - **Escopo:** remover `8092:8000` do host (backend acessível só via proxy do frontend); TLS no nginx (Let's Encrypt ou certificado da organização) com redirect HTTP→HTTPS. **Depende de decisão operacional:** como o TLS será provido (Caddy/Traefik/nginx+Certs vs. proxy externo já existente no host).
 - **Bloqueado por:** — (decisão de infra necessária antes da execução)
 - **Desbloqueia:** —

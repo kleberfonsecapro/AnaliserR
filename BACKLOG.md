@@ -107,7 +107,7 @@ Dois defeitos no mesmo statement:
 
 ### BUG-002 · `download_to_drive` bloqueia o event loop
 
-- **Status (🔴 ABERTO — auditoria 2026-10-09):** download_to_drive ainda bloqueia o loop (bot.py:1262).
+- **Status (✅ RESOLVIDO — onda 1, 2026-10-09):** PTB 22 já baixa de forma assíncrona; restantes blocking I/O (escrita/leitura do arquivo) movidos para thread (bot.py) e teste de não-bloqueio do loop adicionado (tests/test_audio_nao_bloqueia.py). /health segue respondendo porque só a SDK assíncrona é usada.
 
 - **Arquivo:** `backend/bot.py:147`
 - **Severidade:** P0 · **Esforço:** S
@@ -128,7 +128,7 @@ await arquivo.download_to_drive(custom_path=str(caminho))
 
 ### SEC-001 · Backend exposto na internet sem TLS
 
-- **Status (🔴 ABERTO — auditoria 2026-10-09):** 8092 exposta no host (compose:34-35); nginx só listen 80 (frontend/nginx.conf:2).
+- **Status (🟡 PARCIAL — onda 1, 2026-10-09):** porta 8092 removida do host (backend só na rede interna); proxy Caddy com HTTPS automático disponível via `docker compose --profile tls up -d proxy` (docker/Caddyfile). Pendente apenas apontar o domínio e subir o proxy no servidor.
 
 - **Arquivo:** `docker-compose.yml:33`
 - **Severidade:** P0 · **Esforço:** M
@@ -151,7 +151,7 @@ A API (login, CRUD de usuários) fica acessível diretamente, contornando o ngin
 
 ### SEC-002 · Sem rate limit no login — brute force
 
-- **Status (🔴 ABERTO — auditoria 2026-10-09):** POST /auth/login sem rate limit nem registro de tentativa (api.py:149-163).
+- **Status (✅ RESOLVIDO — onda 1, 2026-10-09):** limitador por IP+e-mail (janela deslizante, 5 falhas/5 min) em backend/rate_limit.py com 429 + registro de tentativa malsucedida no log (api.py); coberto por tests/test_rate_limit.py.
 
 - **Arquivo:** `backend/api.py:132-146`
 - **Severidade:** P0 · **Esforço:** M

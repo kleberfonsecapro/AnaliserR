@@ -31,8 +31,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    ports:
-      - "8092:8000"
+    # SEC-001: sem porta no host. O acesso externo é via proxy (frontend 8091
+    # ou o proxy TLS abaixo); quem precisar debugar usa `docker compose exec`.
+    expose:
+      - "8000"
 
   frontend:
     build: ./frontend
@@ -42,5 +44,26 @@ services:
     depends_on:
       - backend
 
+  # SEC-001: HTTPS do painel. Sobe sob demanda com
+  # `DOMAIN=painel.exemplo.com docker compose --profile tls up -d proxy`.
+  # O Caddy emite/renova o certificado via Let's Encrypt; requer o domínio
+  # apontando para este host e portas 80/443 liberadas.
+  proxy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    profiles: ["tls"]
+    env_file: .env
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - frontend
+
 volumes:
   pgdata:
+  caddy_data:
+  caddy_config:

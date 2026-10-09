@@ -1,0 +1,6 @@
+# HTTPS do painel: o Caddy emite e renova o certificado sozinho.
+# DOMAIN vem do .env (ex.: DOMAIN=painel.minhaorg.com.br).
+
+{$DOMAIN} {
+	reverse_proxy frontend:80
+}
