@@ -1,0 +1,12 @@
+# MVP
+## Problema
+## Usuários
+## Escopo da versão 1
+## Fora da versão 1
+## Stack sugerida
+## Roadmap passo a passo
+### Backend
+### Frontend
+## Critérios de aceite
+## Planos de ação
+## Pontos em aberto

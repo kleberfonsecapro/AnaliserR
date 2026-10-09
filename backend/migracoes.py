@@ -24,6 +24,7 @@ MIGRACAO_0004_CONSTRAINT_PAPEL = "0004_constraint_papel_usuarios"
 MIGRACAO_0005_FIM_ANALISES_MVP = "0005_fim_analises_mvp"
 MIGRACAO_0006_TOKENS_REVOGADOS = "0006_tokens_revogados"
 MIGRACAO_0007_AUDITORIA = "0007_auditoria"
+MIGRACAO_0008_PROMPT_VERSAO = "0008_prompt_versao"
 
 
 async def aplicar(pool: asyncpg.Pool) -> None:
@@ -72,6 +73,7 @@ async def aplicar(pool: asyncpg.Pool) -> None:
             (MIGRACAO_0005_FIM_ANALISES_MVP, _remover_analises_mvp),
             (MIGRACAO_0006_TOKENS_REVOGADOS, _criar_tokens_revogados),
             (MIGRACAO_0007_AUDITORIA, _criar_auditoria),
+            (MIGRACAO_0008_PROMPT_VERSAO, _criar_prompt_versao),
         ]
         for nome, passo in novas:
             if nome not in aplicadas:
@@ -347,3 +349,8 @@ async def _criar_auditoria(conn: asyncpg.Connection) -> None:
             ON auditoria (criado_em)
         """
     )
+
+
+async def _criar_prompt_versao(conn: asyncpg.Connection) -> None:
+    """0008 — cada reunião passa a registrar a versão dos prompts (DEV-002)."""
+    await conn.execute("ALTER TABLE reunioes ADD COLUMN IF NOT EXISTS prompt_versao TEXT")

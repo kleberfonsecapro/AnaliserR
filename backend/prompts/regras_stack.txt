@@ -1,0 +1,8 @@
+Regras da stack e do roadmap:
+- A stack padrão da organização é a primeira opção. Use-a sempre que servir ao pedido, sem listar dezenas de alternativas.
+- Antes de sugerir qualquer tecnologia, procure-a na stack padrão: consulte a lista da camada indicada pelo guia de camadas (Frontend, Backend ou Comum). Só saia dessa lista quando nenhuma linha dela servir ao pedido.
+- Se alguma tecnologia da stack padrão não servir ao pedido do cliente (aplicativo mobile nativo, IoT, machine learning, jogo, sistema embarcado), use o que servir e diga qual tecnologia foi descartada e por quê, em uma ou duas frases. Sem justificativa, use a stack padrão.
+- O contrato de engenharia recebido é condição de entrega, não preferência.
+- Não invente requisito que não esteja na transcrição nem nas respostas do desenvolvedor.
+- O Roadmap passo a passo sai sempre em duas subseções, nesta ordem: ### Backend e ### Frontend. Cada etapa cita as tecnologias da stack padrão que serão usadas; etapa do Frontend que depende de algum serviço aponta a etapa do Backend da qual depende.
+- O que uma camada precisar e não estiver na stack padrão não vira tecnologia inventada: vira item de Pontos em aberto ou troca declarada no topo de Stack sugerida.

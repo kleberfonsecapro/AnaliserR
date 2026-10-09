@@ -142,34 +142,39 @@ Cada ticket é fino e end-to-end (tracer bullet): entra código + teste/validaç
 - **Bloqueado por:** —
 - **Desbloqueia:** —
 
-## Onda 4 — P2 (qualidade e DX)
+## Onda 4 — P2 (qualidade e DX) — ✅ concluída em 2026-10-09 (exceto TP-24, aguardando janela de manutenção)
 
 ### TP-19 · OPS-001 — Separar bot do processo da API
 - **Prioridade:** P1 · **Esforço:** L
+- **Status: ✅ FEITO (2026-10-09)** — bot em serviço próprio com heartbeat
 - **Escopo:** bot em container próprio (`python bot.py` com polling + backoff/reconexão) ou supervisor dentro do container; `/health` reflete o estado real do bot (heartbeat do polling).
 - **Bloqueado por:** TP-15 (healthchecks), TP-16 (compose)
 - **Desbloqueia:** —
 
 ### TP-20 · FEAT-003 — Service worker versionado por build
 - **Prioridade:** P2 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — cache do SW versionado por build
 - **Escopo:** nome do cache derivado do hash do build (vite-plugin-pwa ou bump automático), sem servir bundle antigo.
 - **Bloqueado por:** —
 - **Desbloqueia:** —
 
 ### TP-21 · FEAT-004 — Finalizar UX de erro (AbortController)
 - **Prioridade:** P2 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — AbortController no carregar()
 - **Escopo:** `AbortController`/guarda de unmount no `carregar()` de `Admin.jsx`.
 - **Bloqueado por:** —
 - **Desbloqueia:** —
 
 ### TP-22 · FEAT-005 — Observabilidade
 - **Prioridade:** P2 · **Esforço:** M
+- **Status: ✅ FEITO (2026-10-09)** — log com request id (X-Request-Id)
 - **Escopo:** logging estruturado com request id correlacionando `analise_id`; endpoint `/metrics` ou integração mínima definida.
 - **Bloqueado por:** TP-01
 - **Desbloqueia:** —
 
 ### TP-23 · DEV-002 — Versionamento de prompt
 - **Prioridade:** P3 · **Esforço:** S
+- **Status: ✅ FEITO (2026-10-09)** — prompts em arquivos + prompt_versao (0008)
 - **Escopo:** extrair prompts de `bot.py` para arquivos versionados (mesmo padrão de `padrao_stack/`), gravar a versão do prompt/referência usada em cada `reuniao`.
 - **Bloqueado por:** —
 - **Desbloqueia:** —

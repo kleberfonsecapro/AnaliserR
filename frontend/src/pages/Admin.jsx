@@ -42,14 +42,20 @@ export default function Admin({ restante, papel, usuarioId, aoSair }) {
   const descricao = NIVEIS.find((item) => item.id === nivel)?.texto || "";
   const POR_PAGINA = 50;
 
-  async function carregar(paginaAlvo = pagina) {
-    const lista = await listarUsuarios(paginaAlvo, POR_PAGINA);
+  async function carregar(paginaAlvo = pagina, sinal) {
+    const lista = await listarUsuarios(paginaAlvo, POR_PAGINA, sinal);
     setUsuarios(lista);
     setTemMais(lista.length === POR_PAGINA);
   }
 
   useEffect(() => {
-    carregar(pagina).catch((exc) => setErro(exc.message));
+    const controlador = new AbortController();
+    carregar(pagina, controlador.signal).catch((exc) => {
+      if (exc.name !== "AbortError") {
+        setErro(exc.message);
+      }
+    });
+    return () => controlador.abort();
   }, [pagina]);
 
   async function cadastrar(event) {

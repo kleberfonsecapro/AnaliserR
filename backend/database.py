@@ -223,6 +223,7 @@ class Database:
         relatorio_gerado: str,
         transcricao: str | None = None,
         situacao: str = "fechada",
+        prompt_versao: str | None = None,
     ) -> int:
         assert self.pool is not None
         async with self.pool.acquire() as conn:
@@ -230,8 +231,8 @@ class Database:
                 """
                 INSERT INTO reunioes
                     (cliente_id, telegram_user_id, numero, transcricao,
-                     relatorio_gerado, situacao)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                     relatorio_gerado, situacao, prompt_versao)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
                 RETURNING id
                 """,
                 cliente_id,
@@ -240,6 +241,7 @@ class Database:
                 transcricao,
                 relatorio_gerado,
                 situacao,
+                prompt_versao,
             )
         logger.info(
             "reunião %s do cliente %s gravada para o usuário %s",
@@ -256,6 +258,7 @@ class Database:
         relatorio_gerado: str,
         transcricao: str | None,
         situacao: str,
+        prompt_versao: str | None = None,
     ) -> None:
         """Reescreve o relatório da mesma reunião. Não abre outro número."""
         assert self.pool is not None
@@ -263,7 +266,7 @@ class Database:
             status = await conn.execute(
                 """
                 UPDATE reunioes
-                SET relatorio_gerado = $3, transcricao = $4, situacao = $5
+                SET relatorio_gerado = $3, transcricao = $4, situacao = $5, prompt_versao = $6
                 WHERE cliente_id = $1 AND numero = $2
                 """,
                 cliente_id,
@@ -271,6 +274,7 @@ class Database:
                 relatorio_gerado,
                 transcricao,
                 situacao,
+                prompt_versao,
             )
         if status == "UPDATE 0":
             raise LookupError(f"reunião {numero} do cliente {cliente_id} não existe")

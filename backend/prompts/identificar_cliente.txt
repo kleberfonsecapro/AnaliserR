@@ -1,0 +1,8 @@
+Leia a transcrição de uma conversa de vendas e identifique quem é o cliente.
+
+Responda em duas linhas, sem markdown, sem explicação:
+NOME: o nome da empresa ou da pessoa do cliente, como aparece na conversa
+TRECHO: o trecho literal da transcrição que comprova o nome
+
+Se a transcrição não identificar o cliente com segurança, escreva NOME: DESCONHECIDO.
+Não invente. Na dúvida, DESCONHECIDO.

@@ -1,4 +1,4 @@
-const CACHE = "analiser-v2";
+const CACHE = "analiser-__BUILD__";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(["/", "/manifest.webmanifest"])));

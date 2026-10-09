@@ -32,7 +32,8 @@ async function pedir(caminho, opcoes = {}) {
   if (opcoes.body) {
     headers["Content-Type"] = "application/json";
   }
-  const resposta = await fetch(`/api${caminho}`, { ...opcoes, headers });
+  const { signal, ...resto } = opcoes;
+  const resposta = await fetch(`/api${caminho}`, { ...resto, headers, signal });
   if (resposta.status === 401 && token) {
     encerrarSessao();
     throw new Error("sessão expirada");
@@ -62,8 +63,8 @@ export function entrar(email, password) {
   });
 }
 
-export function listarUsuarios(pagina = 0, limite = 50) {
-  return pedir(`/users?limit=${limite}&offset=${pagina * limite}`);
+export function listarUsuarios(pagina = 0, limite = 50, signal) {
+  return pedir(`/users?limit=${limite}&offset=${pagina * limite}`, { signal });
 }
 
 export function criarUsuario(dados) {

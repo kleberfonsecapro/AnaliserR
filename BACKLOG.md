@@ -239,7 +239,7 @@ Sem `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`, `R
 
 ### OPS-001 · Polling do Telegram acoplado ao lifespan do FastAPI
 
-- **Status (🔴 ABERTO — auditoria 2026-10-09):** Bot e API no mesmo processo/event loop (bot.py:1625-1671); /health estático.
+- **Status (✅ RESOLVIDO — onda 4, 2026-10-09):** polling em serviço próprio (`bot` + `bot_worker.py`, `ROLE` separa os processos), healthcheck por heartbeat; restart automático se o polling morrer.
 
 - **Arquivo:** `backend/bot.py:174-206`
 - **Severidade:** P1 · **Esforço:** L
@@ -470,7 +470,7 @@ Não existe `.gitignore` e o `.env` contém credenciais reais de produção (tok
 
 ### FEAT-003 · Service worker com risco de servir bundle antigo
 
-- **Status (🔴 ABERTO — auditoria 2026-10-09):** CACHE manual 'analiser-v2' sem bump por build (frontend/public/sw.js:1).
+- **Status (✅ RESOLVIDO — onda 4, 2026-10-09):** versão do cache vem do timestamp do build (`__BUILD__` substituído no Dockerfile); cada deploy invalida a shell antiga.
 
 - **Arquivo:** `frontend/public/sw.js`
 - **Severidade:** P2 · **Esforço:** S
@@ -487,7 +487,7 @@ Não existe `.gitignore` e o `.env` contém credenciais reais de produção (tok
 
 ### FEAT-004 · Mensagem de sessão expirada e UX de erro frágeis
 
-- **Status (🟡 PARCIAL — auditoria 2026-10-09):** 401/403 tratados (src/api.js:29-43); falta AbortController no carregar() (Admin.jsx:47-49).
+- **Status (✅ RESOLVIDO — onda 4, 2026-10-09):** `carregar()` com AbortController (Admin.jsx) e `signal` propagado em api.js.
 
 - **Arquivos:** `frontend/src/api.js:29-32`, `frontend/src/App.jsx`
 - **Severidade:** P2 · **Esforço:** S
@@ -504,7 +504,7 @@ Não existe `.gitignore` e o `.env` contém credenciais reais de produção (tok
 
 ### FEAT-005 · Sem observabilidade
 
-- **Status (🔴 ABERTO — auditoria 2026-10-09):** Só basicConfig (bot.py:70-75); sem /metrics nem request id.
+- **Status (✅ RESOLVIDO — onda 4, 2026-10-09):** middleware de log com request id (X-Request-Id), método/rota/status/duração por requisição; logs com logger nomeado.
 
 - **Arquivos:** `backend/bot.py:18-23`
 - **Severidade:** P2 · **Esforço:** M
@@ -535,7 +535,7 @@ Logs em `INFO` com `basicConfig` e formato simples, sem request id, sem métrica
 
 ### DEV-002 · Prompt do sistema sem versionamento nem few-shot
 
-- **Status (🟡 PARCIAL — auditoria 2026-10-09):** Referência extraída (referencia.py:252-255); prompts de decisão seguem no código (bot.py:106-167), sem versão gravada na reunião.
+- **Status (✅ RESOLVIDO — onda 4, 2026-10-09):** prompts movidos para backend/prompts/*.txt com versão por hash (`prompts.versao()`); cada reunião grava `prompt_versao` (migração 0008).
 
 - **Arquivo:** `backend/bot.py:26-46`
 - **Severidade:** P3 · **Esforço:** M

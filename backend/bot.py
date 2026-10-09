@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
@@ -25,6 +26,7 @@ from telegram.ext import (
     filters,
 )
 
+import prompts
 import referencia as referencia_mod
 from api import criar_rotas
 from auth import hash_senha
@@ -79,91 +81,6 @@ LIMITE_TELEGRAM = 4096
 ESCOLHER_CLIENTE, CLIENTE_NOVA_REUNIAO, CONFIRMAR_NUMERO = 0, 1, 2
 AGUARDAR_AUDIO, ESCOLHER_CLIENTE_DO_AUDIO, PEDIR_NOME = 3, 4, 5
 AGUARDAR_RESPOSTA = 6
-
-_REGRAS_STACK = """Regras da stack e do roadmap:
-- A stack padrão da organização é a primeira opção. Use-a sempre que servir ao pedido, sem listar dezenas de alternativas.
-- Antes de sugerir qualquer tecnologia, procure-a na stack padrão: consulte a lista da camada indicada pelo guia de camadas (Frontend, Backend ou Comum). Só saia dessa lista quando nenhuma linha dela servir ao pedido.
-- Se alguma tecnologia da stack padrão não servir ao pedido do cliente (aplicativo mobile nativo, IoT, machine learning, jogo, sistema embarcado), use o que servir e diga qual tecnologia foi descartada e por quê, em uma ou duas frases. Sem justificativa, use a stack padrão.
-- O contrato de engenharia recebido é condição de entrega, não preferência.
-- Não invente requisito que não esteja na transcrição nem nas respostas do desenvolvedor.
-- O Roadmap passo a passo sai sempre em duas subseções, nesta ordem: ### Backend e ### Frontend. Cada etapa cita as tecnologias da stack padrão que serão usadas; etapa do Frontend que depende de algum serviço aponta a etapa do Backend da qual depende.
-- O que uma camada precisar e não estiver na stack padrão não vira tecnologia inventada: vira item de Pontos em aberto ou troca declarada no topo de Stack sugerida."""
-
-_SECOES_FECHADAS = """# MVP
-## Problema
-## Usuários
-## Escopo da versão 1
-## Fora da versão 1
-## Stack sugerida
-## Roadmap passo a passo
-### Backend
-### Frontend
-## Critérios de aceite
-## Planos de ação
-## Pontos em aberto"""
-
-PROMPT_DECISAO = f"""Você é o tech lead de IA e analista de requisitos do AnaliseR.
-Recebe a transcrição de uma conversa com o cliente, e as respostas do desenvolvedor quando já houver.
-
-A primeira linha da resposta é exatamente uma destas, sem markdown e sem texto antes:
-SITUACAO: parcial
-SITUACAO: fechada
-
-Escolha parcial quando faltar uma decisão que muda a tecnologia: plataforma, dados, integração ou quem usa o sistema. Detalhe de tela, cor, texto ou nome de campo não segura o fechamento.
-
-Se escolher parcial, depois da primeira linha use exatamente estas seções e nenhuma outra:
-# Análise aberta
-## Entendido
-## Stack provisória
-## Perguntas
-## Pontos em aberto
-
-Em Stack provisória, não tranque a stack. Diga o que a stack padrão cobriria e o que ainda depende da resposta.
-Em Perguntas, no máximo duas, a mais importante primeiro. Cada uma neste formato, com duas opções curtas:
-1. Enunciado?
-- A: opção
-- B: opção
-É proibido escrever a seção Planos de ação.
-
-Se escolher fechada, depois da primeira linha use exatamente estas seções:
-{_SECOES_FECHADAS}
-
-No documento fechado:
-- Extraia só o necessário para um produto mínimo viável.
-- Corte o que não é essencial e liste em Fora da versão 1.
-- O que faltar fica em Pontos em aberto e não vira ticket.
-- No topo de Stack sugerida, diga o que veio da stack padrão e o que foi trocado, com o motivo.
-- Converta cada prática do contrato de engenharia em uma etapa do Roadmap e em um item verificável dos Critérios de aceite.
-- Em Planos de ação, cada ticket é uma fatia vertical pronta para desenvolver, nesta forma:
-### T1. Título
-- Construir: o que entra nesta fatia, de ponta a ponta
-- Pronto quando: como saber que acabou
-- Depende de: Tn, ou nenhum
-Não escreva ticket para ponto em aberto.
-
-{_REGRAS_STACK}"""
-
-PROMPT_FECHADO = f"""Você é o tech lead de IA e analista de requisitos do AnaliseR.
-A análise está sendo fechada agora, mesmo que ainda exista lacuna. Não faça perguntas.
-
-A primeira linha da resposta é exatamente, sem markdown e sem texto antes:
-SITUACAO: fechada
-
-Depois use exatamente estas seções:
-{_SECOES_FECHADAS}
-
-- Extraia só o necessário para um produto mínimo viável.
-- Corte o que não é essencial e liste em Fora da versão 1.
-- Lacuna que sobrar vai para Pontos em aberto, sem ticket.
-- No topo de Stack sugerida, diga o que veio da stack padrão e o que foi trocado, com o motivo.
-- Converta cada prática do contrato de engenharia em uma etapa do Roadmap e em um item verificável dos Critérios de aceite.
-- Em Planos de ação, cada ticket é uma fatia vertical pronta para desenvolver, nesta forma:
-### T1. Título
-- Construir: o que entra nesta fatia, de ponta a ponta
-- Pronto quando: como saber que acabou
-- Depende de: Tn, ou nenhum
-
-{_REGRAS_STACK}"""
 
 _LINHA_SITUACAO = re.compile(r"^SITUACAO:\s*(parcial|fechada)\s*$", re.IGNORECASE)
 _SECAO_PLANOS = re.compile(r"^##\s+Planos de ação\s*$", re.IGNORECASE)
@@ -255,15 +172,6 @@ async def transcrever(caminho: Path) -> str:
     return texto.strip()
 
 
-_CLIENTE_PROMPT = """Leia a transcrição de uma conversa de vendas e identifique quem é o cliente.
-
-Responda em duas linhas, sem markdown, sem explicação:
-NOME: o nome da empresa ou da pessoa do cliente, como aparece na conversa
-TRECHO: o trecho literal da transcrição que comprova o nome
-
-Se a transcrição não identificar o cliente com segurança, escreva NOME: DESCONHECIDO.
-Não invente. Na dúvida, DESCONHECIDO."""
-
 _CLIENTE_VAZIO = re.compile(r"^DESCONHECIDO\s*$", re.IGNORECASE)
 
 
@@ -282,7 +190,7 @@ async def identificar_cliente(transcricao: str) -> tuple[str | None, str]:
             # resposta saía vazia, porque o raciocínio consumiu tudo.
             max_tokens=800,
             messages=[
-                {"role": "system", "content": _CLIENTE_PROMPT},
+                {"role": "system", "content": prompts.identificar_cliente()},
                 {"role": "user", "content": transcricao},
             ],
         )
@@ -511,7 +419,7 @@ async def analisar(transcricao: str, fechar: bool = False) -> tuple[str, str]:
     logger.info("analisando com a referência %s (fechar=%s)", referencia, fechar)
     mensagens = [
         *referencia_mod.mensagens_de_referencia(),
-        {"role": "system", "content": PROMPT_FECHADO if fechar else PROMPT_DECISAO},
+        {"role": "system", "content": prompts.fechado() if fechar else prompts.decisao()},
         {"role": "user", "content": f"Transcrição do áudio do cliente:\n\n{transcricao}"},
     ]
     resposta = await _groq.chat.completions.create(
@@ -697,7 +605,8 @@ async def _gravar_reuniao(context: ContextTypes.DEFAULT_TYPE, cliente: asyncpg.R
         numero = await db.proximo_numero_reuniao(cliente["id"])
     try:
         await db.inserir_reuniao(
-            cliente["id"], usuario_id, numero, relatorio, transcricao, situacao
+            cliente["id"], usuario_id, numero, relatorio, transcricao, situacao,
+            prompt_versao=prompts.versao(),
         )
     except asyncpg.UniqueViolationError:
         # Outra reunião entrou entre a reserva e a gravação: o número reservado
@@ -708,7 +617,8 @@ async def _gravar_reuniao(context: ContextTypes.DEFAULT_TYPE, cliente: asyncpg.R
         numero = await db.proximo_numero_reuniao(cliente["id"])
         try:
             await db.inserir_reuniao(
-                cliente["id"], usuario_id, numero, relatorio, transcricao, situacao
+                cliente["id"], usuario_id, numero, relatorio, transcricao, situacao,
+                prompt_versao=prompts.versao(),
             )
         except Exception:
             logger.exception(
@@ -1427,7 +1337,9 @@ async def _seguir_analise(update: Update, context: ContextTypes.DEFAULT_TYPE, co
         await responder(update, "Não consegui atualizar a análise. A versão aberta continua salva.")
         return AGUARDAR_RESPOSTA
     try:
-        await db.atualizar_reuniao(cliente["id"], numero, relatorio, transcricao, situacao)
+        await db.atualizar_reuniao(
+            cliente["id"], numero, relatorio, transcricao, situacao, prompt_versao=prompts.versao()
+        )
     except Exception:
         logger.exception("falha ao gravar a atualização da reunião %s de %s", numero, codigo)
         await responder(update, "Não consegui salvar a atualização. Tente de novo.")
@@ -1627,8 +1539,9 @@ def criar_telegram() -> Application:
     return aplicacao
 
 
-@asynccontextmanager
-async def ciclo_de_vida(_app: FastAPI):
+async def iniciar_telegram() -> Application:
+    """Sobe o polling do bot. Usado pelo processo `api` (modo legado) e pelo
+    serviço dedicado `bot` (bot_worker.py)."""
     global _groq, _telegram
     try:
         referencia_mod.carregar()
@@ -1652,24 +1565,48 @@ async def ciclo_de_vida(_app: FastAPI):
         drop_pending_updates=True,
         allowed_updates=["message", "callback_query"],
     )
-    logger.info("bot e API no ar")
+    logger.info("bot no ar")
+    return _telegram
+
+
+async def parar_telegram() -> None:
+    global _groq, _telegram
+    if _telegram is not None:
+        if _telegram.updater is not None:
+            await _telegram.updater.stop()
+        await _telegram.stop()
+        await _telegram.shutdown()
+        _telegram = None
+    if _groq is not None:
+        fechar = getattr(_groq, "close", None)
+        if fechar is not None:
+            resultado = fechar()
+            if hasattr(resultado, "__await__"):
+                await resultado
+        _groq = None
+    await db.close()
+
+
+@asynccontextmanager
+async def ciclo_de_vida(_app: FastAPI):
+    """Modo combinado (ROLE não definido): API + polling no mesmo processo,
+    para desenvolvimento local. Em produção o polling roda no serviço `bot`."""
+    if os.environ.get("ROLE", "api") == "api":
+        await db.connect()
+        await db.garantir_admin(
+            os.environ["ADMIN_EMAIL"].strip().lower(),
+            hash_senha(os.environ["ADMIN_PASSWORD"]),
+        )
+        try:
+            yield
+        finally:
+            await db.close()
+        return
+    await iniciar_telegram()
     try:
         yield
     finally:
-        if _telegram is not None:
-            if _telegram.updater is not None:
-                await _telegram.updater.stop()
-            await _telegram.stop()
-            await _telegram.shutdown()
-            _telegram = None
-        if _groq is not None:
-            fechar = getattr(_groq, "close", None)
-            if fechar is not None:
-                resultado = fechar()
-                if hasattr(resultado, "__await__"):
-                    await resultado
-            _groq = None
-        await db.close()
+        await parar_telegram()
 
 
 app = FastAPI(title="AnaliseR", lifespan=ciclo_de_vida)
@@ -1681,4 +1618,25 @@ dominio = os.environ.get("DOMAIN", "").strip()
 if dominio:
     _hosts.append(dominio)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=_hosts)
+
+
+@app.middleware("http")
+async def log_requisicoes(request, call_next):
+    """FEAT-005: toda requisição sai no log com id para correlação."""
+    rid = uuid.uuid4().hex[:12]
+    inicio = time.monotonic()
+    resposta = await call_next(request)
+    duracao_ms = (time.monotonic() - inicio) * 1000
+    logger.info(
+        "http %s %s -> %s (%.0fms) rid=%s",
+        request.method,
+        request.url.path,
+        resposta.status_code,
+        duracao_ms,
+        rid,
+    )
+    resposta.headers["X-Request-Id"] = rid
+    return resposta
+
+
 app.include_router(criar_rotas())

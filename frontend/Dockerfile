@@ -8,6 +8,10 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
+# FEAT-003: o nome do cache do service worker muda a cada build, então uma
+# versão nova invalida a shell antiga em vez de servir bundle velho.
+RUN sed -i "s/__BUILD__/$(date +%s)/" dist/sw.js
+
 FROM nginx:1.27-alpine
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
